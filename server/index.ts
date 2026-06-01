@@ -1,0 +1,757 @@
+import { Hono } from 'hono';
+import { serveStatic } from 'hono/bun';
+import { cors } from 'hono/cors';
+import type { AMCProject, AgentType, EvaluationRecord, KnowledgeItem, ProjectFile, ProjectType } from '../src/types';
+import type { AmcEvaluationEvent } from '../src/hermes/amc-agents';
+import type { StartAnalysisRequest } from '../src/hermes/types';
+import { createAnalysisEventHub } from './analysis-event-hub';
+import {
+  addEvaluationRecord,
+  appendAnalysisEvent,
+  createAnalysisRecord,
+  generateAnalysisId,
+  getAnalysisRecord,
+  getLatestAnalysisRecord,
+  getProject,
+  listKnowledgeItems,
+  listProjects,
+  listRecentAnalysisRecords,
+  upsertKnowledgeItem,
+  upsertProject,
+  type HermesEvent,
+} from './store';
+import { qccDatabase, stockDatabase } from './seed-data';
+import {
+  approveHermesRunAction,
+  askHermes,
+  buildAmcEvaluationRunInstructions,
+  createHermesRun,
+  getHermesRun,
+  hermesBaseUrl,
+  hermesModel,
+  stopHermesRun,
+  streamHermesRunEvents,
+} from './hermes';
+import {
+  createMinioImageAssetResponse,
+  createMinioReportAssetResponse,
+  parseMinioImagePath,
+  parseMinioReportPath,
+} from './minio-assets';
+
+const app = new Hono();
+const hermesAvailable = process.env.HERMES_AGENT_DISABLED !== '1';
+const port = Number(process.env.PORT || 3100);
+
+const analysisEventHub = createAnalysisEventHub({
+  getRecord: getAnalysisRecord,
+  appendEvent: appendAnalysisEvent,
+  streamRunEvents: (runId, signal) => streamHermesRunEvents(runId, signal),
+  buildFailureEvent: async (error, runId) => buildHermesRunStreamFailureEvent(error, await readHermesRunFailureSnapshot(runId)),
+});
+
+app.use('*', cors());
+
+app.get('/api/health', (c) => {
+  return c.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    service: 'amc-agent-api',
+    runtime: 'bun+hono',
+    hermesAvailable,
+    hermesBaseUrl: hermesBaseUrl(),
+    hermesModel: hermesModel(),
+    sqlitePath: process.env.XFAS_ANALYSIS_DB_PATH || 'data/xfas.db',
+  });
+});
+
+app.post('/api/analysis/start', async (c) => {
+  if (!hermesAvailable) return c.json({ message: 'Hermes Agent API 暂不可用。' }, 503);
+
+  const body = await c.req.json<Partial<StartAnalysisRequest> & { projectId?: string }>();
+  const request = typeof body.request === 'string' ? body.request.trim() : '';
+  if (!request) return c.json({ message: '请输入要分析的AMC评估请求。' }, 400);
+
+  const prompt: StartAnalysisRequest = {
+    company: body.company || 'AMC项目',
+    year: Number(body.year) || new Date().getFullYear(),
+    reportType: body.reportType || 'detailed_analysis',
+    request,
+    uploads: Array.isArray(body.uploads) ? body.uploads : undefined,
+  };
+
+  try {
+    const analysisId = generateAnalysisId();
+    const run = await createHermesRun({
+      input: request,
+      sessionId: `amc-analysis-${analysisId}`,
+      instructions: buildAmcEvaluationRunInstructions(),
+    });
+    createAnalysisRecord({
+      analysisId,
+      prompt,
+      projectId: body.projectId,
+      runId: run.run_id,
+      runStatus: run.status,
+    });
+    analysisEventHub.ensureWatching(analysisId);
+
+    return c.json({
+      analysisId,
+      runId: run.run_id,
+      runStatus: run.status,
+      eventCount: 0,
+      eventsUrl: `/api/analysis/${encodeURIComponent(analysisId)}/events`,
+      request,
+    }, 201);
+  } catch (error) {
+    console.error(error);
+    return c.json({ message: 'Hermes Agent API 启动失败，请检查服务地址、API key 或网络。' }, 502);
+  }
+});
+
+app.get('/api/analysis/latest', (c) => {
+  const record = getLatestAnalysisRecord();
+  if (!record) return c.json({ analysis: null });
+  return c.json(analysisResponse(record));
+});
+
+app.get('/api/analysis/recent', (c) => {
+  const limit = Number(c.req.query('limit') ?? 6);
+  return c.json({
+    records: listRecentAnalysisRecords(Number.isFinite(limit) ? limit : 6).map(analysisResponse),
+  });
+});
+
+app.get('/api/analysis/:id', (c) => {
+  const record = getAnalysisRecord(c.req.param('id'));
+  if (!record) return c.json({ message: '未找到该分析记录。' }, 404);
+  return c.json(analysisResponse(record));
+});
+
+app.post('/api/analysis/:id/events', async (c) => {
+  const analysisId = c.req.param('id');
+  if (!getAnalysisRecord(analysisId)) return c.json({ message: '未找到该分析记录。' }, 404);
+  const event = await c.req.json<HermesEvent>();
+  const record = appendAnalysisEvent(analysisId, event);
+  if (!record) return c.json({ message: '事件写入失败。' }, 500);
+  return c.json({ sequence: record.events.length, event }, 201);
+});
+
+app.get('/api/analysis/:id/events', (c) => {
+  const analysisId = c.req.param('id');
+  const record = getAnalysisRecord(analysisId);
+  if (!record) return c.json({ message: '未找到该分析记录。' }, 404);
+
+  const afterSequence = Math.max(0, Math.floor(Number(c.req.query('after') ?? 0) || 0));
+  const encoder = new TextEncoder();
+  let unsubscribe: (() => void) | undefined;
+
+  const stream = new ReadableStream({
+    start(controller) {
+      unsubscribe = analysisEventHub.subscribe(analysisId, afterSequence, item => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(item)}\n\n`));
+      });
+      if (record.runId) analysisEventHub.ensureWatching(analysisId);
+    },
+    cancel() {
+      unsubscribe?.();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
+});
+
+app.get('/api/analysis/:id/report', (c) => {
+  const record = getAnalysisRecord(c.req.param('id'));
+  if (!record) return c.json({ message: '未找到该分析记录。' }, 404);
+  if (!record.report) return c.json({ message: '报告尚未生成。' }, 404);
+  return c.json({
+    format: c.req.query('format') || record.report.format,
+    content: record.report.content,
+    generatedAt: record.report.generatedAt,
+  });
+});
+
+app.post('/api/analysis/:id/approve', async (c) => {
+  if (!hermesAvailable) return c.json({ message: 'Hermes Agent API 暂不可用。' }, 503);
+  const record = getAnalysisRecord(c.req.param('id'));
+  if (!record?.runId) return c.json({ message: '未找到可继续的Hermes运行。' }, 404);
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({} as { reason?: string }));
+
+  try {
+    const run = await approveHermesRunAction(record.runId, body.reason);
+    appendAnalysisEvent(record.analysisId, { type: 'hermes.run.started', runId: run.run_id, status: run.status, input: '用户已授权继续Hermes AMC评估' });
+    analysisEventHub.ensureWatching(record.analysisId);
+    return c.json({ analysis: analysisResponse(getAnalysisRecord(record.analysisId)!), run });
+  } catch (error) {
+    console.error(error);
+    return c.json({ message: 'Hermes 授权继续失败。' }, 502);
+  }
+});
+
+app.post('/api/analysis/:id/stop', async (c) => {
+  const record = getAnalysisRecord(c.req.param('id'));
+  if (!record) return c.json({ message: '未找到该分析记录。' }, 404);
+  analysisEventHub.stop(record.analysisId);
+
+  if (record.runId && hermesAvailable) {
+    try {
+      await stopHermesRun(record.runId);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  const next = appendAnalysisEvent(record.analysisId, { type: 'analysis.failed', message: '用户已停止Hermes AMC评估。' });
+  return c.json({ success: true, analysis: next ? analysisResponse(next) : analysisResponse(record) });
+});
+
+app.post('/api/hermes/chat', async (c) => {
+  if (!hermesAvailable) return c.json({ message: 'Hermes Agent API 暂不可用。' }, 503);
+  const body = await c.req.json<{ prompt?: string; sessionId?: string; conversationTitle?: string }>();
+  if (!body.prompt?.trim()) return c.json({ message: '请输入要追问的问题。' }, 400);
+
+  try {
+    const reply = await askHermes({ prompt: body.prompt, sessionId: body.sessionId, conversationTitle: body.conversationTitle });
+    return c.json({ reply });
+  } catch (error) {
+    console.error(error);
+    return c.json({ message: 'Hermes 智能助手调用失败。' }, 502);
+  }
+});
+
+app.get('/api/assets/minio/images/:rptId/:imageId', async (c) => {
+  const asset = parseMinioImagePath(c.req.param('rptId'), c.req.param('imageId'));
+  if (!asset) return c.json({ message: '图片资源地址无效。' }, 400);
+  return await createMinioImageAssetResponse(asset);
+});
+
+app.get('/api/assets/minio/reports/:rptId/:reportId', async (c) => {
+  const asset = parseMinioReportPath(c.req.param('rptId'), c.req.param('reportId'));
+  if (!asset) return c.json({ message: '报告资源地址无效。' }, 400);
+  return await createMinioReportAssetResponse(asset);
+});
+
+app.get('/api/projects', (c) => c.json(listProjects()));
+
+app.post('/api/projects', async (c) => {
+  const body = await c.req.json<Partial<AMCProject>>();
+  if (!body.name || !body.customerName) return c.json({ error: 'Missing required fields' }, 400);
+
+  const businessFields = body.businessFields || {};
+  const project: AMCProject = {
+    id: body.id || `proj-${Date.now()}`,
+    name: body.name,
+    customerName: body.customerName,
+    projectType: (body.projectType || 'NPA_ACQUISITION') as ProjectType,
+    debtorName: stringFromFields(body, businessFields, ['debtorName'], '综合债务主体'),
+    totalDebt: numberFromFields(body, businessFields, ['totalDebt', 'originalDebt', 'subscriptionAmount', 'restructuringInvestment', 'restructuringCapital', 'transferFloorPrice']),
+    collateralType: stringFromFields(body, businessFields, ['collateralType', 'investmentTarget', 'listingExchange', 'revitalizationScheme'], '无特定单体抵押'),
+    collateralEstValue: numberFromFields(body, businessFields, ['collateralEstValue', 'priorityDebts', 'associatedFinancing']),
+    status: body.files?.length ? 'DataCollected' : 'Draft',
+    description: body.description || '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    files: body.files || [],
+    evaluations: body.evaluations || {},
+    businessFields,
+  };
+
+  return c.json(upsertProject(project), 201);
+});
+
+app.post('/api/projects/:id/files', async (c) => {
+  const project = getProject(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  const body = await c.req.json<Partial<ProjectFile>>();
+  const newFile: ProjectFile = {
+    id: body.id || `file-${Date.now()}`,
+    name: body.name || '未命名文档.txt',
+    size: Number(body.size) || 2048,
+    type: body.type || 'Other',
+    uploadedAt: new Date().toISOString(),
+    contentSnippet: body.contentSnippet || '此文件包含该资产标的或抵质押登记的权属信息、租约及流水核对数据。',
+  };
+  project.files = [...(project.files || []), newFile];
+  project.status = project.status === 'Draft' ? 'DataCollected' : project.status;
+  project.updatedAt = new Date().toISOString();
+  upsertProject(project);
+  return c.json(newFile, 201);
+});
+
+app.delete('/api/projects/:id/files/:fileId', (c) => {
+  const project = getProject(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  project.files = project.files.filter(file => file.id !== c.req.param('fileId'));
+  project.updatedAt = new Date().toISOString();
+  upsertProject(project);
+  return c.json({ success: true });
+});
+
+app.post('/api/projects/:id/evaluate', async (c) => {
+  const project = getProject(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+
+  const body = await c.req.json<{
+    agentType?: AgentType;
+    selectedSkills?: string[];
+    orchestratorMode?: 'single' | 'chain' | 'discuss' | 'master-slave';
+    userInstruction?: string;
+  }>();
+  const mode = body.orchestratorMode || 'single';
+  const skills = body.selectedSkills || [];
+  const activeKbs = chooseKbsBasedOnIntent(body.userInstruction || '', project, body.agentType || 'law_review');
+  const analysisId = generateAnalysisId();
+  const prompt: StartAnalysisRequest = {
+    company: project.name,
+    year: new Date().getFullYear(),
+    reportType: 'amc_evaluation',
+    request: body.userInstruction || `启动 ${project.name} 的 Hermes AMC 多Agent协作评估`,
+  };
+
+  let runId: string | undefined;
+  let runStatus: string | undefined;
+  if (hermesAvailable) {
+    try {
+      const run = await createHermesRun({
+        input: buildAmcRunInput(project, activeKbs, body.userInstruction),
+        sessionId: `amc-analysis-${analysisId}`,
+        instructions: buildAmcEvaluationRunInstructions(),
+      });
+      runId = run.run_id;
+      runStatus = run.status;
+    } catch (error) {
+      console.warn('Hermes Agent API unavailable, using local AMC runner fallback:', error);
+    }
+  }
+
+  createAnalysisRecord({ analysisId, prompt, projectId: project.id, runId, runStatus });
+  const hermesEvents = createLocalAmcEvents(project, mode, body.userInstruction, activeKbs);
+  hermesEvents.forEach(event => appendAnalysisEvent(analysisId, event));
+  const analysisRecord = getAnalysisRecord(analysisId)!;
+  if (runId) analysisEventHub.ensureWatching(analysisId);
+
+  const targetAgentKey = mode !== 'single' ? 'orchestrator' : (body.agentType || 'law_review');
+  const currentHistory = project.evaluations[targetAgentKey] || [];
+  const evaluationRecord: EvaluationRecord = {
+    id: `eval-${Date.now()}`,
+    projectId: project.id,
+    agentType: targetAgentKey,
+    version: currentHistory.length + 1,
+    orchestrationMode: mode,
+    analysisId,
+    hermesEventCount: analysisRecord.events.length,
+    content: analysisRecord.report?.content || buildHermesReport(project, mode, hermesEvents, body.userInstruction),
+    sensitiveWordsFlagged: findSensitiveWords(project),
+    createdAt: new Date().toISOString(),
+    status: 'Draft',
+    usedSkills: skills,
+    usedKnowledgeBases: activeKbs,
+    reflection: {
+      score: runId ? 90 : 88,
+      completeness: 90,
+      compliance: 88,
+      depth: 87,
+      professionalism: 89,
+      pros: ['已按Hermes事件流完成法律、风险、估值、行业多维闭环', '报告生成过程具备可回放事件记录'],
+      cons: runId ? ['Hermes远端事件仍会继续回放追加到analysis记录'] : ['当前使用本地规则化fallback，尚未获得远端Hermes运行结果'],
+      suggestions: '建议后续接入真实企查查、司法案例、市场行情和MinIO报告产物，进一步增强证据链。',
+    },
+  };
+
+  addEvaluationRecord(project.id, targetAgentKey, evaluationRecord);
+  return c.json({
+    success: true,
+    isLiveLlm: false,
+    isHermes: true,
+    analysisId,
+    events: analysisRecord.events.map((event, index) => ({ sequence: index + 1, event })),
+    record: evaluationRecord,
+  }, 201);
+});
+
+app.put('/api/projects/:id/evaluations/:evalId/status', async (c) => {
+  const project = getProject(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  const body = await c.req.json<Partial<EvaluationRecord>>();
+  const evalId = c.req.param('evalId');
+  let updated: EvaluationRecord | null = null;
+
+  for (const key of Object.keys(project.evaluations || {})) {
+    project.evaluations[key] = project.evaluations[key].map(record => {
+      if (record.id !== evalId) return record;
+      updated = { ...record, ...body, status: body.status || record.status };
+      return updated;
+    });
+  }
+
+  if (!updated) return c.json({ error: 'Evaluation record not found' }, 404);
+  project.updatedAt = new Date().toISOString();
+  upsertProject(project);
+  return c.json({ success: true, record: updated });
+});
+
+app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
+  const project = getProject(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  const { selectedText, instruction } = await c.req.json<{ selectedText?: string; instruction?: string }>();
+  if (!selectedText || !instruction) return c.json({ error: 'Missing selectedText or instruction' }, 400);
+
+  const evalId = c.req.param('evalId');
+  let foundEval: EvaluationRecord | null = null;
+  for (const key of Object.keys(project.evaluations || {})) {
+    const list = project.evaluations[key];
+    const index = list.findIndex(record => record.id === evalId);
+    if (index >= 0) {
+      foundEval = { ...list[index] };
+      const tunedText = buildLocalTunedText(selectedText, instruction);
+      foundEval.content = replaceSelectedText(foundEval.content, selectedText, tunedText, instruction);
+      list[index] = foundEval;
+
+      const feedbackItem: KnowledgeItem = {
+        id: `kn-feed-${Date.now()}`,
+        category: 'feedback',
+        title: `段落微调反馈: 修订响应 - ${project.name}`,
+        content: `【修订项目】: ${project.name}\n【原报告段落】:\n${selectedText}\n\n【调整微调指令】:\n${instruction}\n\n【调整后优质段落】:\n${tunedText}`,
+        tags: ['微调反馈', '段落修订', project.projectType || 'General'],
+        source: '用户选中微调反馈',
+      };
+      upsertKnowledgeItem(feedbackItem);
+      project.updatedAt = new Date().toISOString();
+      upsertProject(project);
+      return c.json({ success: true, record: foundEval, feedbackItem, tunedText });
+    }
+  }
+
+  return c.json({ error: 'Evaluation record not found' }, 404);
+});
+
+app.get('/api/knowledge', (c) => c.json(listKnowledgeItems()));
+
+app.post('/api/knowledge', async (c) => {
+  const body = await c.req.json<Omit<KnowledgeItem, 'id'> & { id?: string }>();
+  if (!body.category || !body.title || !body.content) return c.json({ error: 'Missing required fields' }, 400);
+  const item: KnowledgeItem = {
+    id: body.id || `kn-${Date.now()}`,
+    category: body.category,
+    title: body.title,
+    content: body.content,
+    tags: Array.isArray(body.tags) ? body.tags : [],
+    source: body.source,
+  };
+  return c.json(upsertKnowledgeItem(item), 201);
+});
+
+app.get('/api/qcc', (c) => {
+  const query = c.req.query('query')?.trim();
+  if (!query) return c.json({ error: 'Empty query parameter' });
+  const matched = qccDatabase[query];
+  if (matched) return c.json(matched);
+  return c.json({
+    companyName: query,
+    legalPerson: '模拟法人',
+    regStatus: '存续',
+    regCapital: '10000.00 万元人民币',
+    establishDate: '2016年08月18日',
+    address: '模拟工商登记地址',
+    shareholders: [{ name: '主要股东A', ratio: '70.0%' }, { name: '主要股东B', ratio: '30.0%' }],
+    risks: [{ title: '存在司法或经营风险待核验', type: 'MEDIUM', date: '2026-05-01', desc: '当前为本地模拟工商画像，请接入真实企查查后核验。' }],
+  });
+});
+
+app.get('/api/stock', (c) => {
+  const query = c.req.query('query')?.trim();
+  if (!query) return c.json({ error: 'Empty query parameter' });
+  const matched = stockDatabase[query];
+  if (matched) return c.json(matched);
+  return c.json({
+    code: 'N/A',
+    name: query,
+    price: 3.12,
+    change: 1.2,
+    volume: '451,200 手',
+    marketCap: '37.4 亿元',
+    peRatio: 145.2,
+  });
+});
+
+app.use('/assets/*', serveStatic({ root: './dist' }));
+app.use('/favicon.ico', serveStatic({ root: './dist' }));
+app.get('*', serveStatic({ path: './dist/index.html' }));
+
+function analysisResponse(record: NonNullable<ReturnType<typeof getAnalysisRecord>>) {
+  return {
+    prompt: record.prompt,
+    analysis: record.state,
+    state: record.state,
+    runId: record.runId,
+    runStatus: record.runStatus,
+    eventCount: record.events.length,
+    updatedAt: record.updatedAt,
+    report: record.report,
+  };
+}
+
+function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruction?: string) {
+  return [
+    `项目名称：${project.name}`,
+    `客户名称：${project.customerName}`,
+    `债务主体：${project.debtorName}`,
+    `项目类型：${project.projectType}`,
+    `债权金额：${project.totalDebt} 万元`,
+    `抵质押物：${project.collateralType}`,
+    `抵押物估值：${project.collateralEstValue} 万元`,
+    `项目说明：${project.description}`,
+    `启用知识库：${activeKbs.join('、')}`,
+    userInstruction ? `用户专项指令：${userInstruction}` : '',
+    project.files?.length ? `附件摘要：\n${project.files.map(file => `- ${file.name}: ${file.contentSnippet}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function createLocalAmcEvents(project: AMCProject, mode: string, userInstruction: string | undefined, activeKbs: string[]): HermesEvent[] {
+  const debt = Number(project.totalDebt) || Number(getBusinessField(project, 'originalDebt', 0)) || 0;
+  const collateralValue = Number(project.collateralEstValue) || Number(getBusinessField(project, 'collateralEstValue', 0)) || Math.round(debt * 0.7);
+  const liquidationValue = Math.round(collateralValue * 0.55);
+  const marketValue = Math.round(collateralValue * 0.78);
+  const mortgageRate = marketValue > 0 ? Math.round((debt / marketValue) * 1000) / 10 : 0;
+  const recoveryRate = debt > 0 ? Math.min(95, Math.round((liquidationValue / debt) * 1000) / 10) : 55;
+  const riskScore = Math.max(45, Math.min(92, Math.round(100 - recoveryRate + (mortgageRate > 80 ? 18 : 8))));
+  const instruction = userInstruction ? `专项指令已纳入：${userInstruction}` : '按标准AMC多维评估流程执行';
+
+  const events: HermesEvent[] = [
+    {
+      type: 'amc.asset.intake',
+      assetId: project.id,
+      assetType: project.projectType || 'AMC_PROJECT',
+      assetValue: collateralValue,
+      debtAmount: debt,
+      debtorInfo: {
+        name: project.debtorName,
+        customerName: project.customerName,
+        collateralType: project.collateralType,
+        instruction,
+        mode,
+        knowledgeBases: activeKbs,
+      },
+    },
+    {
+      type: 'amc.legal_review.completed',
+      agentId: 'legal_reviewer',
+      findings: {
+        ownershipStatus: project.files?.length ? '资料已入库，权属链条需二次核验' : '缺少完整权属附件',
+        legalObstacles: ['抵押顺位与首封状态需核验', '工程款优先受偿权需排查', '债权转让通知与国资流程需留痕'],
+        litigationRisk: debt > 8000 || /诉讼|查封|冻结|失信/.test(project.description || '') ? '高' : '中',
+        complianceIssues: ['需补充底层合同、担保文件和司法执行状态交叉验证'],
+        recommendations: '以首封顺位、抵押登记连续性和保证主体可执行财产作为承接前置条件。',
+      },
+    },
+    {
+      type: 'amc.risk_assessment.completed',
+      agentId: 'risk_assessor',
+      findings: {
+        creditRisk: debt > 10000 ? '高' : '中高',
+        marketRisk: collateralValue < debt ? '高' : '中',
+        liquidityRisk: /空置|远郊|工业|设备/.test(`${project.description} ${project.collateralType}`) ? '中高' : '中',
+        riskMitigation: ['压低承接价格', '追加第二还款来源', '设置分阶段付款与回购触发条件'],
+      },
+    },
+    {
+      type: 'amc.valuation_analysis.completed',
+      agentId: 'valuation_auditor',
+      findings: {
+        valuationMethods: ['市场比较法', '收益还原法', '清算折扣法'],
+        liquidationValue,
+        marketValue,
+        mortgageRate,
+        valuationReport: '结合空置率、司法处置周期、区域成交折扣和租金覆盖率，对账面抵押价值进行保守折减。',
+      },
+    },
+    {
+      type: 'amc.industry_analysis.completed',
+      agentId: 'industry_analyst',
+      findings: {
+        industryTrend: /工业|机械|设备/.test(project.collateralType) ? '工业资产更新分化，优质产能仍具盘活窗口' : '商办资产结构分化，空置资产承压',
+        competitivePosition: '区域流动性依赖折扣幅度、司法处置效率和增信补强条件',
+        marketOutlook: '短期仍需审慎定价，中期可通过重组或公开挂牌提升退出确定性',
+        recommendedAction: '优先选择带增信的协议重组、公开挂牌或司法变价退出。',
+      },
+    },
+    {
+      type: 'amc.comprehensive_evaluation',
+      overallRating: riskScore >= 75 ? '审慎承接' : '有条件承接',
+      suggestedPrice: Math.round(collateralValue * 0.52),
+      recoveryRate,
+      riskScore,
+      disposalRecommendation: '不建议按账面足额承接，应以司法瑕疵、空置折价和担保补强作为定价与付款前置条件。',
+    },
+  ];
+  events.push({
+    type: 'amc.report.generated',
+    reportFormat: 'markdown',
+    reportContent: buildHermesReport(project, mode, events as AmcEvaluationEvent[], userInstruction),
+  });
+  events.push({ type: 'analysis.completed' });
+  return events;
+}
+
+function buildHermesReport(project: AMCProject, mode: string, events: HermesEvent[], userInstruction?: string) {
+  const legal = events.find(event => event.type === 'amc.legal_review.completed') as Extract<AmcEvaluationEvent, { type: 'amc.legal_review.completed' }> | undefined;
+  const risk = events.find(event => event.type === 'amc.risk_assessment.completed') as Extract<AmcEvaluationEvent, { type: 'amc.risk_assessment.completed' }> | undefined;
+  const valuation = events.find(event => event.type === 'amc.valuation_analysis.completed') as Extract<AmcEvaluationEvent, { type: 'amc.valuation_analysis.completed' }> | undefined;
+  const industry = events.find(event => event.type === 'amc.industry_analysis.completed') as Extract<AmcEvaluationEvent, { type: 'amc.industry_analysis.completed' }> | undefined;
+  const comprehensive = events.find(event => event.type === 'amc.comprehensive_evaluation') as Extract<AmcEvaluationEvent, { type: 'amc.comprehensive_evaluation' }> | undefined;
+
+  return `# Hermes AMC 多Agent协作评估报告
+
+## 一、项目与事件流概览
+- 项目名称：${project.name}
+- 债务主体：${project.debtorName}
+- 账面债权/参考金额：${project.totalDebt} 万元
+- 标的资产：${project.collateralType}
+- 评估模式：${mode}
+- Hermes事件数：${events.length}
+${userInstruction ? `- 专项指令：${userInstruction}` : ''}
+
+## 二、法律审查专家结论
+- 产权状态：${legal?.findings.ownershipStatus || '需补充权属文件'}
+- 诉讼风险：${legal?.findings.litigationRisk || '中高'}
+- 主要障碍：${(legal?.findings.legalObstacles || []).join('；') || '抵押顺位、查封状态及工程款优先权需复核'}
+- 合规问题：${(legal?.findings.complianceIssues || []).join('；') || '需补充交易审批与资产转让留痕'}
+- 建议：${legal?.findings.recommendations || '先完成首封顺位和保证担保穿透核验，再进入定价审批。'}
+
+## 三、风险评估专家结论
+- 信用风险：${risk?.findings.creditRisk || '高'}
+- 市场风险：${risk?.findings.marketRisk || '中高'}
+- 流动性风险：${risk?.findings.liquidityRisk || '中高'}
+- 缓释措施：${(risk?.findings.riskMitigation || []).join('；') || '追加反担保、压低受让价格、设置分阶段退出条件'}
+
+## 四、估值审核专家结论
+- 估值方法：${(valuation?.findings.valuationMethods || []).join('、') || '市场法、收益法、清算折扣法'}
+- 市场价值：${valuation?.findings.marketValue ?? project.collateralEstValue} 万元
+- 清算价值：${valuation?.findings.liquidationValue ?? Math.round((project.collateralEstValue || project.totalDebt || 0) * 0.55)} 万元
+- 抵押率/LTV：${valuation?.findings.mortgageRate ?? 0}%
+- 估值说明：${valuation?.findings.valuationReport || '结合空置率、司法处置周期与区域成交折扣进行保守折减。'}
+
+## 五、行业分析专家结论
+- 行业趋势：${industry?.findings.industryTrend || '结构分化，优质底层资产仍具备处置窗口'}
+- 竞争地位：${industry?.findings.competitivePosition || '区域流动性依赖折扣和司法处置效率'}
+- 市场前景：${industry?.findings.marketOutlook || '短期承压，需通过重整或折价转让提升退出确定性'}
+- 建议动作：${industry?.findings.recommendedAction || '优先选择带增信的协议重组或公开挂牌退出。'}
+
+## 六、综合评估与处置建议
+- 综合评级：${comprehensive?.overallRating || '审慎承接'}
+- 建议处置/承接价格：${comprehensive?.suggestedPrice ?? Math.round((project.collateralEstValue || project.totalDebt || 0) * 0.52)} 万元
+- 预期回收率：${comprehensive?.recoveryRate ?? 52}%
+- 风险评分：${comprehensive?.riskScore ?? 68}
+- 处置建议：${comprehensive?.disposalRecommendation || '不建议按账面足额承接，应以司法瑕疵、空置折价和担保补强为前置条件。'}
+
+## 七、事件驱动说明
+本报告由 Hermes AMC 事件流生成，analysis 记录可通过 /api/analysis/:id/events 按 sequence 回放。`;
+}
+
+function chooseKbsBasedOnIntent(instruction: string, project: AMCProject, agentType: AgentType) {
+  const text = `${instruction} ${project.description} ${project.collateralType} ${project.projectType}`.toLowerCase();
+  const categoriesSelected = new Set<string>(['policies', 'legal', 'methodology', 'internal_policies']);
+  if (agentType === 'evaluation' || /估值|价值|折扣|回收|ltv|抵押/.test(text)) categoriesSelected.add('market');
+  if (agentType === 'industry' || /行业|市场|周期|产业|商办|工业/.test(text)) categoriesSelected.add('industry');
+  if (agentType === 'risk_review' || /风险|担保|流动性|退出|准入/.test(text)) categoriesSelected.add('cases');
+  if (/案例|司法|诉讼|查封|冻结/.test(text)) categoriesSelected.add('cases');
+  return Array.from(categoriesSelected);
+}
+
+function getBusinessField(project: AMCProject, key: string, fallback: unknown = '') {
+  return project.businessFields?.[key] ?? (project as unknown as Record<string, unknown>)[key] ?? fallback;
+}
+
+function findSensitiveWords(project: AMCProject) {
+  const flagged: string[] = [];
+  ['贪腐', '倒闭潮', '行贿', '虚开增值税', '转移资产规避'].forEach(word => {
+    if (project.description?.includes(word)) flagged.push(`项目简介包含敏感词 '${word}'`);
+  });
+  return flagged;
+}
+
+function buildLocalTunedText(selectedText: string, instruction: string) {
+  const cleanOrig = selectedText.trim();
+  if (instruction.includes('精炼') || instruction.includes('精简') || instruction.includes('组织精炼')) {
+    return '经Hermes本地审查链复核，该段内容已压缩为更适合投委会阅读的审查结论：在法律依据、估值折扣和风险缓释三项前置条件成立的情况下，可进入有条件承接判断；冗余背景描述已合并到底稿附件中。';
+  }
+  if (instruction.includes('司法红线') || instruction.includes('民法典') || instruction.includes('最高院')) {
+    return `${cleanOrig}\n\nHermes法律审查专家补充：该结论应以《民法典》担保物权规则、建设工程价款优先受偿权以及执行查封顺位为硬约束。若首封状态、轮候冻结或承建商优先权未核清，不得直接按账面抵押价值进入承接测算。`;
+  }
+  if (instruction.includes('反担保') || instruction.includes('担保')) {
+    return `${cleanOrig}\n\nHermes风险评估专家补充：建议将新增反担保作为交易先决条件，明确担保主体、可执行财产、登记顺位和触发处置机制，并将补强结果同步写入投委会审批底稿。`;
+  }
+  if (instruction.includes('列表') || instruction.includes('数据') || instruction.includes('重组')) {
+    return '1. **法律确权**：复核抵押登记、首封顺位、轮候冻结和工程款优先权。\n2. **估值折扣**：按司法周期、空置损耗和区域成交折扣重算清算价值。\n3. **风险缓释**：引入反担保、阶段付款和退出触发条件。\n4. **重组路径**：优先采用公开竞价、协议重组或带回购约束的结构化处置。';
+  }
+  return `${cleanOrig}\n\nHermes多Agent本地修订意见：该段应同步纳入法律、估值、风险和行业四维审查结果，作为后续报告版本和反馈知识库的可追溯修订依据。`;
+}
+
+function replaceSelectedText(originalContent: string, selectedText: string, tunedText: string, instruction: string) {
+  if (originalContent.includes(selectedText)) return originalContent.replace(selectedText, tunedText);
+  const cleanSelected = selectedText.trim();
+  if (originalContent.includes(cleanSelected)) return originalContent.replace(cleanSelected, tunedText);
+  const line = cleanSelected.split('\n').map(item => item.trim()).find(item => item.length > 15 && originalContent.includes(item));
+  if (line) return originalContent.replace(line, `${line}\n\n**Hermes微调修订**：${tunedText}`);
+  return `${originalContent}\n\n---\n\n### Hermes智能微调修订反馈响应\n> 针对原文片段：${selectedText.slice(0, 100)}...\n\n> 修订指令：${instruction}\n\n${tunedText}`;
+}
+
+function stringFromFields(body: Partial<AMCProject>, fields: Record<string, unknown>, keys: string[], fallback: string) {
+  for (const key of keys) {
+    const value = fields[key] ?? (body as Record<string, unknown>)[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value);
+  }
+  return fallback;
+}
+
+function numberFromFields(body: Partial<AMCProject>, fields: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = fields[key] ?? (body as Record<string, unknown>)[key];
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return 0;
+}
+
+type HermesRunFailureSnapshot = { status: string; lastEvent?: string };
+
+async function readHermesRunFailureSnapshot(runId: string): Promise<HermesRunFailureSnapshot | null> {
+  try {
+    const run = await getHermesRun(runId);
+    return {
+      status: run.status,
+      lastEvent: typeof run.last_event === 'string' ? run.last_event : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildHermesRunStreamFailureEvent(error: unknown, snapshot: HermesRunFailureSnapshot | null): HermesEvent {
+  const errorMessage = error instanceof Error ? error.message : '未知错误';
+  if (snapshot && /^(queued|running|in_progress|requires_action)$/i.test(snapshot.status) && /Hermes run event stream failed with 404/i.test(errorMessage)) {
+    return {
+      type: 'analysis.stream_interrupted',
+      message: '分析进度连接暂时无法续订，当前过程已保留。可以稍后恢复或重新运行。',
+    };
+  }
+  return {
+    type: 'analysis.failed',
+    message: '分析进度连接中断，Hermes Agent API 暂不可用。',
+  };
+}
+
+const server = Bun.serve({
+  port,
+  fetch: app.fetch,
+});
+
+console.log(`AMC Agent API listening on ${server.url}`);

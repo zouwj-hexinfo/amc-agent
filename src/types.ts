@@ -59,6 +59,8 @@ export interface EvaluationRecord {
   agentType: AgentType;
   version: number;
   orchestrationMode?: 'single' | 'chain' | 'discuss' | 'master-slave';
+  analysisId?: string;
+  hermesEventCount?: number;
   content: string; // Markdown output
   reflection?: SelfReflection;
   sensitiveWordsFlagged: string[];
@@ -142,4 +144,3 @@ export interface ExecutionEvent {
   steps: ExecutionStep[];
   communicationTranscripts: CommunicationBubble[];
 }
-

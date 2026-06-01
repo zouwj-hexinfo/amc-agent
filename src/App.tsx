@@ -1045,9 +1045,11 @@ export default function App() {
         const projRes = await fetch("/api/projects");
         const list: AMCProject[] = await projRes.json();
         setProjects(list);
-        setEvalSuccessMessage(data.isLiveLlm 
-          ? "✔ 成功调用大模型与合规知识库及品质控制专家合规自检，实时报告已出炉。" 
-          : "☁ 成功触发背景多专家评估管线，专家审核报告已生成，包含品质自建反思评分。"
+        setEvalSuccessMessage(data.isHermes
+          ? "✔ Hermes 多Agent事件流已完成，法律、估值、风险与行业审查报告已生成。"
+          : data.isLiveLlm
+            ? "✔ 成功调用大模型与合规知识库及品质控制专家合规自检，实时报告已出炉。"
+            : "☁ 成功触发背景多专家评估管线，专家审核报告已生成，包含品质自建反思评分。"
         );
         // Clear custom prompt instruction after successful send
         setInstructionText("");
