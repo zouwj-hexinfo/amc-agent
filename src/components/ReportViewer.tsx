@@ -492,7 +492,7 @@ export default function ReportViewer({
                               {isTuningSubmitting ? (
                                 <>
                                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                  <span>专家微调写稿中...</span>
+                                  <span>Hermes 微调写稿中...</span>
                                 </>
                               ) : (
                                 <>

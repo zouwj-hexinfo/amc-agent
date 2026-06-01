@@ -410,6 +410,7 @@ app.put('/api/projects/:id/evaluations/:evalId/status', async (c) => {
 app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
   const project = getProject(c.req.param('id'));
   if (!project) return c.json({ error: 'Project not found' }, 404);
+  if (!hermesAvailable) return c.json({ error: 'Hermes Agent API 暂不可用，段落微调未执行。' }, 503);
   const { selectedText, instruction } = await c.req.json<{ selectedText?: string; instruction?: string }>();
   if (!selectedText || !instruction) return c.json({ error: 'Missing selectedText or instruction' }, 400);
 
@@ -420,7 +421,13 @@ app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
     const index = list.findIndex(record => record.id === evalId);
     if (index >= 0) {
       foundEval = { ...list[index] };
-      const tunedText = buildLocalTunedText(selectedText, instruction);
+      let tunedText: string;
+      try {
+        tunedText = await tuneParagraphWithHermes(project, foundEval, selectedText, instruction);
+      } catch (error) {
+        console.error('Hermes paragraph tuning failed:', error);
+        return c.json({ error: 'Hermes Agent API 段落微调失败，请稍后重试。' }, 502);
+      }
       foundEval.content = replaceSelectedText(foundEval.content, selectedText, tunedText, instruction);
       list[index] = foundEval;
 
@@ -435,7 +442,7 @@ app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
       upsertKnowledgeItem(feedbackItem);
       project.updatedAt = new Date().toISOString();
       upsertProject(project);
-      return c.json({ success: true, record: foundEval, feedbackItem, tunedText });
+      return c.json({ success: true, isHermes: true, record: foundEval, feedbackItem, tunedText });
     }
   }
 
@@ -563,21 +570,48 @@ function findSensitiveWords(project: AMCProject) {
   return flagged;
 }
 
-function buildLocalTunedText(selectedText: string, instruction: string) {
-  const cleanOrig = selectedText.trim();
-  if (instruction.includes('精炼') || instruction.includes('精简') || instruction.includes('组织精炼')) {
-    return '经Hermes本地审查链复核，该段内容已压缩为更适合投委会阅读的审查结论：在法律依据、估值折扣和风险缓释三项前置条件成立的情况下，可进入有条件承接判断；冗余背景描述已合并到底稿附件中。';
-  }
-  if (instruction.includes('司法红线') || instruction.includes('民法典') || instruction.includes('最高院')) {
-    return `${cleanOrig}\n\nHermes法律审查专家补充：该结论应以《民法典》担保物权规则、建设工程价款优先受偿权以及执行查封顺位为硬约束。若首封状态、轮候冻结或承建商优先权未核清，不得直接按账面抵押价值进入承接测算。`;
-  }
-  if (instruction.includes('反担保') || instruction.includes('担保')) {
-    return `${cleanOrig}\n\nHermes风险评估专家补充：建议将新增反担保作为交易先决条件，明确担保主体、可执行财产、登记顺位和触发处置机制，并将补强结果同步写入投委会审批底稿。`;
-  }
-  if (instruction.includes('列表') || instruction.includes('数据') || instruction.includes('重组')) {
-    return '1. **法律确权**：复核抵押登记、首封顺位、轮候冻结和工程款优先权。\n2. **估值折扣**：按司法周期、空置损耗和区域成交折扣重算清算价值。\n3. **风险缓释**：引入反担保、阶段付款和退出触发条件。\n4. **重组路径**：优先采用公开竞价、协议重组或带回购约束的结构化处置。';
-  }
-  return `${cleanOrig}\n\nHermes多Agent本地修订意见：该段应同步纳入法律、估值、风险和行业四维审查结果，作为后续报告版本和反馈知识库的可追溯修订依据。`;
+async function tuneParagraphWithHermes(project: AMCProject, record: EvaluationRecord, selectedText: string, instruction: string) {
+  const prompt = [
+    '你是 AMC 不良资产评估报告的 Hermes 段落精修 Agent。',
+    '请根据用户指令改写选中段落，只输出修订后的段落正文，不要输出解释、前后缀、寒暄、代码块或标题。',
+    '修订必须保持原报告的专业语气，保留必要的事实、金额、主体名称、法律/估值/风险口径；如果指令要求补充，请在原段落基础上补强，不要编造未给出的外部事实。',
+    '',
+    '【项目背景】',
+    `项目名称：${project.name}`,
+    `客户名称：${project.customerName}`,
+    `项目类型：${project.projectType}`,
+    `债务主体：${project.debtorName}`,
+    `债权金额：${project.totalDebt} 万元`,
+    `抵质押物：${project.collateralType}`,
+    `抵押物估值：${project.collateralEstValue} 万元`,
+    `当前报告版本：v${record.version}`,
+    record.analysisId ? `关联 analysisId：${record.analysisId}` : '',
+    '',
+    '【用户微调指令】',
+    instruction.trim(),
+    '',
+    '【选中原文】',
+    selectedText.trim(),
+    '',
+    '【修订后段落】',
+  ].filter(Boolean).join('\n');
+
+  const reply = await askHermes({
+    prompt,
+    sessionId: `amc-tune-${project.id}-${record.id}`,
+    conversationTitle: `AMC段落微调-${project.name}`,
+  });
+  const tunedText = cleanHermesTunedText(reply);
+  if (!tunedText) throw new Error('Hermes tuning response was empty');
+  return tunedText;
+}
+
+function cleanHermesTunedText(value: string) {
+  return value
+    .replace(/^```(?:markdown|md|text)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .replace(/^【?修订后段落】?[：:]\s*/i, '')
+    .trim();
 }
 
 function replaceSelectedText(originalContent: string, selectedText: string, tunedText: string, instruction: string) {

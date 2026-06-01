@@ -1445,9 +1445,9 @@ ${selectedTextStr}
         const kbData: KnowledgeItem[] = await kbRes.json();
         setKbItems(kbData);
 
-        addToast("已成功微调报告！您的深度指令已付诸大模型执行，生成的结果已同步收录至反馈知识库。", "success");
+        addToast("已成功微调报告！Hermes Agent 已完成段落修订，结果已同步收录至反馈知识库。", "success");
       } else {
-        addToast(data.error || "大模型微调失败，请稍后重试。", "error");
+        addToast(data.error || "Hermes Agent 段落微调失败，请稍后重试。", "error");
       }
     } catch (err) {
       console.error("Tuning submission failed:", err);
