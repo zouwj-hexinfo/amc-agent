@@ -272,12 +272,13 @@ export function normalizeHermesRunEvent(payload: unknown): AnalysisEvent | null 
         label: stringValue(payload.label) ?? stringValue(payload.name) ?? 'Hermes 工件',
       };
     case 'message.delta':
+    case 'hermes.output.delta':
     case 'response.output_text.delta':
     case 'tool.output':
     case 'tool.delta':
     case 'tool.message':
     case 'function_call_output': {
-      const text = stringValue(payload.delta) ?? stringValue(payload.text) ?? stringValue(payload.output) ?? stringValue(payload.message);
+      const text = textValue(payload.delta) ?? textValue(payload.text) ?? textValue(payload.output) ?? textValue(payload.message);
       return text ? withoutUndefined({
         type: 'hermes.output.delta' as const,
         agentId: stringValue(payload.agentId) ?? stringValue(payload.agent_id),
@@ -299,10 +300,11 @@ export function normalizeHermesRunEvent(payload: unknown): AnalysisEvent | null 
     case 'tool.approval.required':
       return normalizeRequiresAction(payload);
     case 'run.completed':
+    case 'hermes.run.completed':
     case 'analysis.completed':
       return {
         type: 'hermes.run.completed',
-        output: userFacingHermesText(stringValue(payload.output) ?? stringValue(payload.message) ?? 'Hermes Agent 运行完成'),
+        output: userFacingHermesText(textValue(payload.output) ?? textValue(payload.message) ?? 'Hermes Agent 运行完成'),
       };
     case 'run.failed':
     case 'analysis.failed':
@@ -406,6 +408,22 @@ function truncate(value: string, maxLength: number) {
 
 function stringValue(value: unknown) {
   return typeof value === 'string' ? value : undefined;
+}
+
+function textValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const text = value.map(textValue).filter(Boolean).join('\n').trim();
+    return text || undefined;
+  }
+  if (isRecord(value)) {
+    return textValue(value.markdown)
+      ?? textValue(value.content)
+      ?? textValue(value.text)
+      ?? textValue(value.message)
+      ?? textValue(value.output);
+  }
+  return undefined;
 }
 
 function numberValue(value: unknown, fallback: number) {

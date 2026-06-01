@@ -61,6 +61,7 @@ export interface EvaluationRecord {
   orchestrationMode?: 'single' | 'chain' | 'discuss' | 'master-slave';
   analysisId?: string;
   hermesEventCount?: number;
+  runStatus?: 'running' | 'completed' | 'failed' | 'requires_action' | 'stream_interrupted';
   content: string; // Markdown output
   reflection?: SelfReflection;
   sensitiveWordsFlagged: string[];

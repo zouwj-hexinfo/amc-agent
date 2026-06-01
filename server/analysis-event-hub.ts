@@ -36,6 +36,12 @@ export function createAnalysisEventHub(deps: HubDeps) {
       for await (const event of deps.streamRunEvents(runId, abortController.signal)) {
         if (abortController.signal.aborted) return;
         persist(analysisId, event);
+        if (event.type === 'hermes.run.completed') {
+          const content = event.output?.trim();
+          if (content) persist(analysisId, { type: 'amc.report.generated', reportFormat: 'markdown', reportContent: content });
+          persist(analysisId, { type: 'analysis.completed' });
+          break;
+        }
         if (isTerminalEvent(event)) break;
       }
     } catch (error) {

@@ -2,5 +2,5 @@
   "name": "AMC项目评估智能体系统",
   "description": "基于多智能体并联、串联与主从协同编排技术的资产管理公司（AMC）智能化项目评审与评估报告生成系统。",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_HERMES_AGENT_API"]
 }

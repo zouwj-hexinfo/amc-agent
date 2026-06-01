@@ -1,20 +1,16 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# AMC Agent
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/588260ab-121f-43aa-afa9-57d56e793fce
+AMC 多 Agent 协作评估工作台，前端使用 React + Vite，后端使用 Bun + Hono。主流程通过 Hermes Agent API 创建真实异步 run，并通过 SSE 回放分析事件、生成报告和写入项目成果目录。
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:** Bun 1.x
 
+1. 安装依赖：
+   `bun install`
+2. 配置 Hermes Agent API：
+   `HERMES_AGENT_API_URL`、`HERMES_AGENT_API_KEY`、`HERMES_AGENT_MODEL=deepseek-v4-flash`
+3. 启动开发环境：
+   `bun run dev`
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+默认 API 端口为 `3100`，Vite 前端会将 `/api` 代理到 `http://localhost:3100`。

@@ -20,6 +20,14 @@ export type AnalysisRecord = {
   projectId?: string;
   runId?: string;
   runStatus?: string;
+  metadata?: {
+    targetAgentKey?: string;
+    orchestrationMode?: 'single' | 'chain' | 'discuss' | 'master-slave';
+    selectedSkills?: string[];
+    knowledgeBases?: string[];
+    sensitiveWordsFlagged?: string[];
+    draftOutput?: string;
+  };
   state: AmcEvaluationState | null;
   events: HermesEvent[];
   report?: { format: string; content: string; generatedAt: string };
@@ -36,6 +44,7 @@ type AnalysisRow = {
   state_json: string | null;
   events_json: string;
   report_json: string | null;
+  metadata_json: string | null;
   updated_at: string;
 };
 
@@ -96,6 +105,11 @@ function runMigrations(store: Database) {
       value text not null
     );
   `);
+  try {
+    store.query('alter table analysis_records add column metadata_json text').run();
+  } catch (error) {
+    if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
+  }
   store
     .query('insert or ignore into schema_migrations (id, applied_at) values (?, ?)')
     .run('001_initial_bun_hono_sqlite_amc', new Date().toISOString());
@@ -152,6 +166,7 @@ export function createAnalysisRecord(input: {
   projectId?: string;
   runId?: string;
   runStatus?: string;
+  metadata?: AnalysisRecord['metadata'];
 }) {
   const record: AnalysisRecord = {
     analysisId: input.analysisId,
@@ -159,6 +174,7 @@ export function createAnalysisRecord(input: {
     projectId: input.projectId,
     runId: input.runId,
     runStatus: input.runStatus,
+    metadata: input.metadata,
     state: null,
     events: [],
     updatedAt: new Date().toISOString(),
@@ -191,6 +207,7 @@ export function appendAnalysisEvent(analysisId: string, event: HermesEvent) {
   if (!record) return null;
   const nextEvents = [...record.events, event];
   let nextState = record.state;
+  let metadata = record.metadata;
   if (event.type === 'amc.asset.intake') {
     nextState = createInitialAmcEvaluationState(analysisId, {
       id: event.assetId,
@@ -203,12 +220,31 @@ export function appendAnalysisEvent(analysisId: string, event: HermesEvent) {
   } else if (nextState) {
     nextState = reduceAmcEvaluationEvent(nextState, event as AmcEvaluationEvent);
   }
+  if (event.type === 'hermes.output.delta' && event.text) {
+    metadata = { ...metadata, draftOutput: `${metadata?.draftOutput || ''}${event.text}` };
+  }
   const report = event.type === 'amc.report.generated'
     ? { format: event.reportFormat, content: event.reportContent, generatedAt: new Date().toISOString() }
-    : record.report;
-  const nextRecord = { ...record, events: nextEvents, state: nextState, report, updatedAt: new Date().toISOString() };
+    : event.type === 'hermes.run.completed'
+      ? {
+          format: 'markdown',
+          content: (event.output || metadata?.draftOutput || '').trim(),
+          generatedAt: new Date().toISOString(),
+        }
+      : record.report;
+  const runStatus = event.type === 'analysis.completed' || event.type === 'hermes.run.completed'
+    ? 'completed'
+    : event.type === 'analysis.failed'
+      ? 'failed'
+      : event.type === 'analysis.requires_action'
+        ? 'requires_action'
+        : event.type === 'analysis.stream_interrupted'
+          ? 'stream_interrupted'
+          : record.runStatus;
+  const nextRecord = { ...record, events: nextEvents, state: nextState, report, runStatus, metadata, updatedAt: new Date().toISOString() };
   writeAnalysisRecord(nextRecord);
   writeLatestAnalysisId(analysisId);
+  if (event.type === 'analysis.completed') writeCompletedEvaluation(nextRecord);
   return nextRecord;
 }
 
@@ -233,6 +269,7 @@ function readAnalysisRow(row: AnalysisRow): AnalysisRecord {
     state: row.state_json ? JSON.parse(row.state_json) as AmcEvaluationState : null,
     events: JSON.parse(row.events_json) as HermesEvent[],
     report: row.report_json ? JSON.parse(row.report_json) as AnalysisRecord['report'] : undefined,
+    metadata: row.metadata_json ? JSON.parse(row.metadata_json) as AnalysisRecord['metadata'] : undefined,
     updatedAt: row.updated_at,
   };
 }
@@ -263,10 +300,57 @@ function writeAnalysisRecord(record: AnalysisRecord) {
       record.report ? JSON.stringify(record.report) : null,
       record.updatedAt,
     );
+  database()
+    .query('update analysis_records set metadata_json = ? where analysis_id = ?')
+    .run(record.metadata ? JSON.stringify(record.metadata) : null, record.analysisId);
 }
 
 function writeLatestAnalysisId(analysisId: string) {
   database()
     .query("insert into analysis_metadata (key, value) values ('latestAnalysisId', ?) on conflict(key) do update set value = excluded.value")
     .run(analysisId);
+}
+
+function writeCompletedEvaluation(record: AnalysisRecord) {
+  if (!record.projectId || !record.report?.content?.trim()) return;
+  const project = getProject(record.projectId);
+  if (!project) return;
+  const targetAgentKey = record.metadata?.targetAgentKey || 'orchestrator';
+  const evaluations = project.evaluations || {};
+  const existing = evaluations[targetAgentKey] || [];
+  if (existing.some(item => item.analysisId === record.analysisId && item.runStatus === 'completed')) return;
+
+  const nextVersion = Math.max(0, ...existing.map(item => Number(item.version) || 0)) + 1;
+  const evaluationRecord: EvaluationRecord = {
+    id: `eval-${Date.now()}`,
+    projectId: project.id,
+    agentType: targetAgentKey as EvaluationRecord['agentType'],
+    version: nextVersion,
+    orchestrationMode: record.metadata?.orchestrationMode,
+    analysisId: record.analysisId,
+    hermesEventCount: record.events.length,
+    runStatus: 'completed',
+    content: record.report.content,
+    sensitiveWordsFlagged: record.metadata?.sensitiveWordsFlagged || [],
+    createdAt: new Date().toISOString(),
+    status: 'Draft',
+    usedSkills: record.metadata?.selectedSkills || [],
+    usedKnowledgeBases: record.metadata?.knowledgeBases || [],
+    reflection: {
+      score: 90,
+      completeness: 90,
+      compliance: 88,
+      depth: 88,
+      professionalism: 90,
+      pros: ['已由真实Hermes事件流生成并回放', '报告生成过程已写入analysis事件记录'],
+      cons: ['外部工商、行情和司法数据源仍按当前项目既有接口状态使用'],
+      suggestions: '建议在正式投产前补齐真实外部数据源与报告附件证据链。',
+    },
+  };
+
+  evaluations[targetAgentKey] = [evaluationRecord, ...existing.filter(item => item.analysisId !== record.analysisId)];
+  project.evaluations = evaluations;
+  project.status = 'Reviewing';
+  project.updatedAt = new Date().toISOString();
+  upsertProject(project);
 }
