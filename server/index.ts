@@ -37,6 +37,11 @@ import {
   parseMinioImagePath,
   parseMinioReportPath,
 } from './minio-assets';
+import {
+  buildKnowledgeRetrievalPlan,
+  formatKnowledgeContext,
+  retrieveKnowledge,
+} from './knowledge-orchestrator';
 
 const app = new Hono();
 const hermesAvailable = process.env.HERMES_AGENT_DISABLED !== '1';
@@ -307,9 +312,12 @@ app.post('/api/projects/:id/evaluate', async (c) => {
   }>();
   const mode = body.orchestratorMode || 'single';
   const skills = body.selectedSkills || [];
-  const activeKbs = chooseKbsBasedOnIntent(body.userInstruction || '', project, body.agentType || 'law_review');
   const analysisId = generateAnalysisId();
   const targetAgentKey = mode !== 'single' ? 'orchestrator' : (body.agentType || 'law_review');
+  const knowledgePlan = buildKnowledgeRetrievalPlan(project, targetAgentKey, body.userInstruction || '');
+  const knowledgeCitations = retrieveKnowledge(knowledgePlan, listKnowledgeItems());
+  const knowledgeContext = formatKnowledgeContext(knowledgeCitations);
+  const activeKbs = knowledgePlan.categories;
   const prompt: StartAnalysisRequest = {
     company: project.name,
     year: new Date().getFullYear(),
@@ -320,7 +328,7 @@ app.post('/api/projects/:id/evaluate', async (c) => {
   let run;
   try {
     run = await createHermesRun({
-      input: buildAmcRunInput(project, activeKbs, body.userInstruction),
+      input: buildAmcRunInput(project, activeKbs, body.userInstruction, knowledgeContext),
       sessionId: `amc-analysis-${analysisId}`,
       instructions: buildAmcEvaluationRunInstructions(),
     });
@@ -340,6 +348,8 @@ app.post('/api/projects/:id/evaluate', async (c) => {
       orchestrationMode: mode,
       selectedSkills: skills,
       knowledgeBases: activeKbs,
+      knowledgePlan,
+      knowledgeCitations,
       sensitiveWordsFlagged: findSensitiveWords(project),
     },
   });
@@ -536,7 +546,7 @@ function appendHermesEventWithCompletion(analysisId: string, event: HermesEvent)
   return latest;
 }
 
-function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruction?: string) {
+function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruction?: string, knowledgeContext?: string) {
   return [
     `项目名称：${project.name}`,
     `客户名称：${project.customerName}`,
@@ -549,17 +559,15 @@ function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruct
     `启用知识库：${activeKbs.join('、')}`,
     userInstruction ? `用户专项指令：${userInstruction}` : '',
     project.files?.length ? `附件摘要：\n${project.files.map(file => `- ${file.name}: ${file.contentSnippet}`).join('\n')}` : '',
+    knowledgeContext,
+    [
+      '【知识引用规则】',
+      '1. 上方本地知识库仅作为应用主数据模型检索结果使用。',
+      '2. 若报告实质采用某条本地知识，请在相关段落或参考知识清单中保留知识ID。',
+      '3. 如需更多本地知识，请输出 fenced JSON knowledge_search 协议块。',
+      '4. 如形成可复用经验，只能输出 knowledge_write_suggestion 协议块，不能声称已写入正式知识库。',
+    ].join('\n'),
   ].filter(Boolean).join('\n');
-}
-
-function chooseKbsBasedOnIntent(instruction: string, project: AMCProject, agentType: AgentType) {
-  const text = `${instruction} ${project.description} ${project.collateralType} ${project.projectType}`.toLowerCase();
-  const categoriesSelected = new Set<string>(['policies', 'legal', 'methodology', 'internal_policies']);
-  if (agentType === 'evaluation' || /估值|价值|折扣|回收|ltv|抵押/.test(text)) categoriesSelected.add('market');
-  if (agentType === 'industry' || /行业|市场|周期|产业|商办|工业/.test(text)) categoriesSelected.add('industry');
-  if (agentType === 'risk_review' || /风险|担保|流动性|退出|准入/.test(text)) categoriesSelected.add('cases');
-  if (/案例|司法|诉讼|查封|冻结/.test(text)) categoriesSelected.add('cases');
-  return Array.from(categoriesSelected);
 }
 
 function findSensitiveWords(project: AMCProject) {

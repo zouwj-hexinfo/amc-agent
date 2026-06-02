@@ -9,6 +9,17 @@ import {
 } from '../src/hermes/amc-event-handler';
 import type { AmcEvaluationEvent } from '../src/hermes/amc-agents';
 import type { AnalysisEvent, StartAnalysisRequest } from '../src/hermes/types';
+import {
+  buildKnowledgeRetrievalPlanFromRequest,
+  buildKnowledgeSearchResponse,
+  createKnowledgeWriteSuggestion,
+  parseHermesKnowledgeProtocol,
+  retrieveKnowledge,
+  type KnowledgeCitation,
+  type KnowledgeRetrievalPlan,
+  type KnowledgeSearchResponse,
+  type KnowledgeWriteSuggestion,
+} from './knowledge-orchestrator';
 import { seedKnowledgeBase, seedProjects } from './seed-data';
 
 export type HermesEvent = AmcEvaluationEvent | AnalysisEvent;
@@ -27,6 +38,11 @@ export type AnalysisRecord = {
     knowledgeBases?: string[];
     sensitiveWordsFlagged?: string[];
     draftOutput?: string;
+    knowledgePlan?: KnowledgeRetrievalPlan;
+    knowledgeCitations?: KnowledgeCitation[];
+    knowledgeRequests?: KnowledgeSearchResponse[];
+    knowledgeWriteSuggestions?: KnowledgeWriteSuggestion[];
+    knowledgeProtocolParseFailures?: Array<{ message: string; raw: string; createdAt: string }>;
   };
   state: AmcEvaluationState | null;
   events: HermesEvent[];
@@ -223,6 +239,7 @@ export function appendAnalysisEvent(analysisId: string, event: HermesEvent) {
   if (event.type === 'hermes.output.delta' && event.text) {
     metadata = { ...metadata, draftOutput: `${metadata?.draftOutput || ''}${event.text}` };
   }
+  metadata = applyKnowledgeProtocolMetadata(record, event, metadata);
   const report = event.type === 'amc.report.generated'
     ? { format: event.reportFormat, content: event.reportContent, generatedAt: new Date().toISOString() }
     : event.type === 'hermes.run.completed'
@@ -246,6 +263,61 @@ export function appendAnalysisEvent(analysisId: string, event: HermesEvent) {
   writeLatestAnalysisId(analysisId);
   if (event.type === 'analysis.completed') writeCompletedEvaluation(nextRecord);
   return nextRecord;
+}
+
+function applyKnowledgeProtocolMetadata(
+  record: AnalysisRecord,
+  event: HermesEvent,
+  metadata: AnalysisRecord['metadata'],
+): AnalysisRecord['metadata'] {
+  const results = parseHermesKnowledgeProtocol(event);
+  if (!results.length) return metadata;
+
+  const nextMetadata = { ...metadata };
+  const createdAt = new Date().toISOString();
+
+  results.forEach(result => {
+    if (result.kind === 'search') {
+      const plan = buildKnowledgeRetrievalPlanFromRequest(result.request);
+      const citations = retrieveKnowledge(plan, listKnowledgeItems());
+      const response: KnowledgeSearchResponse = {
+        request: result.request,
+        plan,
+        citations,
+        responseText: buildKnowledgeSearchResponse(citations),
+        createdAt,
+      };
+      nextMetadata.knowledgeRequests = [...(nextMetadata.knowledgeRequests || []), response];
+      nextMetadata.knowledgeCitations = mergeKnowledgeCitations(nextMetadata.knowledgeCitations || [], citations);
+      return;
+    }
+
+    if (result.kind === 'write_suggestion') {
+      const suggestion = createKnowledgeWriteSuggestion(result.request, {
+        analysisId: record.analysisId,
+        runId: record.runId,
+        createdAt,
+      });
+      nextMetadata.knowledgeWriteSuggestions = [...(nextMetadata.knowledgeWriteSuggestions || []), suggestion];
+      return;
+    }
+
+    nextMetadata.knowledgeProtocolParseFailures = [
+      ...(nextMetadata.knowledgeProtocolParseFailures || []),
+      { message: result.message, raw: result.raw.slice(0, 500), createdAt },
+    ];
+  });
+
+  return nextMetadata;
+}
+
+function mergeKnowledgeCitations(existing: KnowledgeCitation[], next: KnowledgeCitation[]) {
+  const byId = new Map<string, KnowledgeCitation>();
+  [...existing, ...next].forEach(citation => {
+    const current = byId.get(citation.id);
+    if (!current || citation.score > current.score) byId.set(citation.id, citation);
+  });
+  return [...byId.values()].sort((a, b) => b.score - a.score);
 }
 
 export function addEvaluationRecord(projectId: string, key: string, record: EvaluationRecord) {

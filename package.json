@@ -10,7 +10,8 @@
     "build": "tsc --noEmit && vite build && bun build server/index.ts --target=bun --outdir=dist/server",
     "start": "bun run dist/server/index.js",
     "clean": "rm -rf dist dist-server data/xfas.db",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
