@@ -1,5 +1,5 @@
 import React from "react";
-import { KnowledgeItem, KnowledgeWriteSuggestionReview } from "../types";
+import { KnowledgeAttachmentPreview, KnowledgeItem, KnowledgeWriteSuggestionReview } from "../types";
 import { 
   BookOpen, Search, PlusCircle, Scale, BarChart3, Database, MessageSquare, 
   ClipboardCheck, Briefcase, UploadCloud, FileText, Trash2, Paperclip, X 
@@ -175,6 +175,9 @@ export default function KnowledgeBaseView({
 
   // Uploaded files and drag & drop states
   const [uploadedFiles, setUploadedFiles] = React.useState<File[]>([]);
+  const [attachmentPreview, setAttachmentPreview] = React.useState<KnowledgeAttachmentPreview | null>(null);
+  const [isPreviewingAttachments, setIsPreviewingAttachments] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState("");
   const [dragActive, setDragActive] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -201,14 +204,47 @@ export default function KnowledgeBaseView({
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setUploadedFiles(prev => [...prev, ...Array.from(e.dataTransfer.files)]);
+      appendUploadedFiles(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setUploadedFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+      appendUploadedFiles(Array.from(e.target.files || []));
       e.target.value = "";
+    }
+  };
+
+  const appendUploadedFiles = (files: File[]) => {
+    const next = [...uploadedFiles, ...files];
+    setUploadedFiles(next);
+    void previewFiles(next);
+  };
+
+  const previewFiles = async (files: File[]) => {
+    if (!files.length) return;
+    setIsPreviewingAttachments(true);
+    setPreviewError("");
+    try {
+      const form = new FormData();
+      files.forEach(file => form.append("files", file));
+      const res = await fetch("/api/knowledge/attachments/preview", {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "附件预解析失败");
+      const preview: KnowledgeAttachmentPreview = await res.json();
+      setAttachmentPreview(preview);
+      if (!formTitle.trim() && preview.title) setFormTitle(preview.title);
+      if (!formTags.trim() && preview.tags.length) setFormTags(preview.tags.join(", "));
+      if (!formSource.trim() && preview.source) setFormSource(preview.source);
+      if (!formContent.trim() && preview.content) setFormContent(preview.content);
+      if (!editingItem && selectedCat === "all" && preview.category) setFormCat(preview.category);
+    } catch (error) {
+      console.error(error);
+      setPreviewError(error instanceof Error ? error.message : "附件预解析失败");
+    } finally {
+      setIsPreviewingAttachments(false);
     }
   };
 
@@ -217,7 +253,15 @@ export default function KnowledgeBaseView({
   };
 
   const removeUploadedFile = (idx: number) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== idx));
+    setUploadedFiles(prev => {
+      const next = prev.filter((_, i) => i !== idx);
+      if (next.length) void previewFiles(next);
+      else {
+        setAttachmentPreview(null);
+        setPreviewError("");
+      }
+      return next;
+    });
   };
 
   const handleOpenAddForm = () => {
@@ -228,6 +272,8 @@ export default function KnowledgeBaseView({
     setFormTags("");
     setFormSource("");
     setUploadedFiles([]);
+    setAttachmentPreview(null);
+    setPreviewError("");
     setIsAdding(true);
   };
 
@@ -239,6 +285,8 @@ export default function KnowledgeBaseView({
     setFormTags(item.tags.join(", "));
     setFormSource(item.source || "");
     setUploadedFiles([]);
+    setAttachmentPreview(null);
+    setPreviewError("");
     setSelectedDetailItem(null);
     setIsAdding(true);
   };
@@ -285,6 +333,8 @@ export default function KnowledgeBaseView({
       setFormTags("");
       setFormSource("");
       setUploadedFiles([]);
+      setAttachmentPreview(null);
+      setPreviewError("");
       setEditingItem(null);
       setIsAdding(false);
     } catch (e) {
@@ -444,6 +494,35 @@ export default function KnowledgeBaseView({
                 </div>
               </div>
             )}
+
+            {(isPreviewingAttachments || attachmentPreview || previewError) && (
+              <div className={`mt-3 rounded-xl border p-3 text-xs ${
+                previewError
+                  ? "border-rose-200 bg-rose-50 text-rose-700"
+                  : "border-emerald-200 bg-emerald-50/70 text-emerald-800"
+              }`}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-extrabold">
+                    {isPreviewingAttachments ? "正在预解析附件并自动填充表单..." : previewError ? "附件预解析失败" : "附件已预解析，已自动补全空字段"}
+                  </span>
+                  {attachmentPreview && !previewError && (
+                    <span className="font-mono text-[10px]">{attachmentPreview.files.filter(file => file.parseStatus === "parsed").length}/{attachmentPreview.files.length} 已解析</span>
+                  )}
+                </div>
+                {previewError && <p className="mt-1 font-semibold">{previewError}</p>}
+                {attachmentPreview && !previewError && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {attachmentPreview.files.map(file => (
+                      <span key={file.fileName} className={`px-2 py-0.5 rounded-md font-bold border ${
+                        file.parseStatus === "parsed" ? "bg-white/80 border-emerald-200 text-emerald-700" : "bg-white/80 border-rose-200 text-rose-700"
+                      }`}>
+                        {file.fileName} · {file.parseStatus === "parsed" ? "可检索文本已提取" : "解析失败"}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-1">
@@ -474,6 +553,8 @@ export default function KnowledgeBaseView({
                 setFormTags("");
                 setFormSource("");
                 setUploadedFiles([]);
+                setAttachmentPreview(null);
+                setPreviewError("");
                 setEditingItem(null);
                 setIsAdding(false);
               }}

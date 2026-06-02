@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import * as XLSX from 'xlsx';
 import type { KnowledgeAttachment, KnowledgeWriteSuggestionReview, MarketObject } from '../src/types';
-import { parseKnowledgeAttachmentFile } from './knowledge-attachment-parser';
+import { mergeHermesKnowledgeAttachmentPreview, parseKnowledgeAttachmentFile, previewKnowledgeAttachmentFiles } from './knowledge-attachment-parser';
 
 process.env.XFAS_ANALYSIS_DB_PATH = ':memory:';
 
@@ -114,5 +114,33 @@ describe('knowledge attachment parser', () => {
     const file = new File(['binary'], 'image.bin', { type: 'application/octet-stream' });
     const result = await parseKnowledgeAttachmentFile(file);
     expect(result.parseStatus).toBe('failed');
+  });
+
+  test('previews files and infers form fields', async () => {
+    const file = new File(['最高人民法院\n轮候查封与抵押权顺位规则\n司法拍卖折扣说明'], '抵押顺位规则.txt', { type: 'text/plain' });
+    const preview = await previewKnowledgeAttachmentFiles([file]);
+
+    expect(preview.title).toContain('轮候查封');
+    expect(preview.source).toBe('最高人民法院');
+    expect(preview.tags).toContain('抵押权');
+    expect(preview.content).toContain('司法拍卖折扣说明');
+    expect(preview.files[0].parseStatus).toBe('parsed');
+  });
+
+  test('merges Hermes extracted preview fields', async () => {
+    const fallback = await previewKnowledgeAttachmentFiles([
+      new File(['附件原始文本'], 'fallback.txt', { type: 'text/plain' }),
+    ]);
+    const merged = mergeHermesKnowledgeAttachmentPreview(fallback, JSON.stringify({
+      title: 'Hermes 提取标题',
+      tags: ['司法拍卖', '抵押权'],
+      source: 'Hermes 数据源',
+      content: 'Hermes 提取的备注信息',
+    }));
+
+    expect(merged.title).toBe('Hermes 提取标题');
+    expect(merged.tags).toEqual(['司法拍卖', '抵押权']);
+    expect(merged.source).toBe('Hermes 数据源');
+    expect(merged.content).toBe('Hermes 提取的备注信息');
   });
 });

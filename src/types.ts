@@ -105,6 +105,22 @@ export interface KnowledgeAttachment {
   uploadedAt: string;
 }
 
+export interface KnowledgeAttachmentPreview {
+  title?: string;
+  category?: KnowledgeItem['category'];
+  tags: string[];
+  source?: string;
+  content?: string;
+  files: Array<{
+    fileName: string;
+    mimeType: string;
+    size: number;
+    parseStatus: 'parsed' | 'failed';
+    parseError?: string;
+    parsedTextExcerpt?: string;
+  }>;
+}
+
 export interface KnowledgeWriteSuggestionReview {
   id: string;
   analysisId?: string;

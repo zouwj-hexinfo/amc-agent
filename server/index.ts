@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { cors } from 'hono/cors';
-import type { AMCProject, AgentType, EvaluationRecord, KnowledgeItem, MarketObject, ProjectFile, ProjectType } from '../src/types';
+import type { AMCProject, AgentType, EvaluationRecord, KnowledgeAttachmentPreview, KnowledgeItem, MarketObject, ProjectFile, ProjectType } from '../src/types';
 import type { StartAnalysisRequest } from '../src/hermes/types';
 import { createAnalysisEventHub } from './analysis-event-hub';
 import {
@@ -55,7 +55,7 @@ import {
   formatKnowledgeContext,
   retrieveKnowledge,
 } from './knowledge-orchestrator';
-import { parseKnowledgeAttachmentFile } from './knowledge-attachment-parser';
+import { mergeHermesKnowledgeAttachmentPreview, parseKnowledgeAttachmentFile, previewKnowledgeAttachmentFiles } from './knowledge-attachment-parser';
 
 const app = new Hono();
 const hermesAvailable = process.env.HERMES_AGENT_DISABLED !== '1';
@@ -487,6 +487,29 @@ app.post('/api/knowledge', async (c) => {
   return c.json(upsertKnowledgeItem(item), 201);
 });
 
+app.post('/api/knowledge/attachments/preview', async (c) => {
+  const body = await c.req.parseBody({ all: true });
+  const rawFiles = body.files ?? body.file;
+  const files = (Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : []).filter((item): item is File => item instanceof File);
+  if (!files.length) return c.json({ error: 'Missing multipart file fields named files or file' }, 400);
+  const maxSize = Number(process.env.KNOWLEDGE_ATTACHMENT_MAX_BYTES || 10 * 1024 * 1024);
+  const oversized = files.find(file => file.size > maxSize);
+  if (oversized) return c.json({ error: `File ${oversized.name} exceeds ${maxSize} byte limit` }, 413);
+  const fallbackPreview = await previewKnowledgeAttachmentFiles(files);
+  if (!hermesAvailable) return c.json(fallbackPreview);
+  try {
+    const hermesText = await askHermes({
+      prompt: buildKnowledgeAttachmentPreviewPrompt(fallbackPreview),
+      sessionId: `knowledge-preview-${Date.now()}`,
+      conversationTitle: '知识库附件字段预解析',
+    });
+    return c.json(mergeHermesKnowledgeAttachmentPreview(fallbackPreview, hermesText));
+  } catch (error) {
+    console.error('Hermes knowledge attachment preview failed:', error);
+    return c.json(fallbackPreview);
+  }
+});
+
 app.put('/api/knowledge/:id', async (c) => {
   const existing = getKnowledgeItem(c.req.param('id'));
   if (!existing) return c.json({ error: 'Knowledge item not found' }, 404);
@@ -692,6 +715,25 @@ function normalizeKnowledgeItem(body: Partial<KnowledgeItem> & { id?: string }):
     tags: normalizeTags((body as { tags?: unknown }).tags),
     source: body.source?.trim() || undefined,
   };
+}
+
+function buildKnowledgeAttachmentPreviewPrompt(preview: KnowledgeAttachmentPreview) {
+  return [
+    '你是 AMC 不良资产知识库入库助手。请根据附件解析文本，提取知识库维护表单的 4 个字段。',
+    '只输出 JSON 对象，不要输出解释、寒暄、Markdown 或代码块。',
+    'JSON 结构必须严格为：{"title":"...","tags":["..."],"source":"...","content":"..."}',
+    '字段要求：',
+    '1. title：文档、规章或案例标题，优先使用正式标题，避免把发文机关当标题。',
+    '2. tags：3-8 个中文特征标签，聚焦 AMC 风控、法律、估值、市场、案例或内规关键词。',
+    '3. source：颁布单位、发文单位、数据源或资料来源；无法确定则使用空字符串。',
+    '4. content：备注信息，用 300-800 字总结可供 RAG 检索的核心规则、适用场景、风险点和评估口径。',
+    '',
+    '【附件解析概况】',
+    preview.files.map(file => `- ${file.fileName}：${file.parseStatus}${file.parseError ? `，${file.parseError}` : ''}`).join('\n'),
+    '',
+    '【附件解析文本】',
+    (preview.content || '').slice(0, 12000),
+  ].join('\n');
 }
 
 function normalizeTags(value: unknown) {
