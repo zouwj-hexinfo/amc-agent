@@ -180,7 +180,7 @@ export function retrieveKnowledge(plan: KnowledgeRetrievalPlan, items: Knowledge
       title: item.title,
       source: item.source,
       tags: normalizeTags(item.tags),
-      snippet: buildSnippet(item.content, plan.keywords),
+      snippet: buildSnippet(searchableKnowledgeText(item), plan.keywords),
       score,
     }));
 }
@@ -299,7 +299,7 @@ function parseWriteSuggestionRequest(payload: Record<string, unknown>, raw: stri
 function scoreKnowledgeItem(item: KnowledgeItem, keywords: string[], categories: Set<KnowledgeCategory>) {
   let matchScore = 0;
   const title = normalizeText(item.title);
-  const content = normalizeText(item.content);
+  const content = normalizeText(searchableKnowledgeText(item));
   const source = normalizeText(item.source || '');
   const tags = normalizeTags(item.tags).map(normalizeText);
 
@@ -314,6 +314,15 @@ function scoreKnowledgeItem(item: KnowledgeItem, keywords: string[], categories:
   if (!keywords.length) return categories.has(item.category) ? 2 : 0;
   if (!matchScore) return 0;
   return matchScore + (categories.has(item.category) ? 6 : 0);
+}
+
+function searchableKnowledgeText(item: KnowledgeItem) {
+  return [
+    item.content,
+    ...(item.attachments || [])
+      .filter(attachment => attachment.parseStatus === 'parsed' && attachment.parsedText)
+      .map(attachment => `【附件 ${attachment.fileName}】\n${attachment.parsedText}`),
+  ].join('\n\n');
 }
 
 function buildSnippet(content: string, keywords: string[]) {

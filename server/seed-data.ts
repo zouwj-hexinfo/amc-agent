@@ -1,4 +1,4 @@
-import type { AMCProject, KnowledgeItem } from '../src/types';
+import type { AMCProject, KnowledgeItem, MarketObject } from '../src/types';
 
 export const seedProjects: AMCProject[] = [
   {
@@ -124,6 +124,45 @@ export const seedKnowledgeBase: KnowledgeItem[] = [
     content: '专用设备折旧和环保排放标准会影响工业资产清算流动性。',
     tags: ['核心机电', '装备制造', '流动性变化'],
     source: '长江机械精工研究院',
+  },
+];
+
+export const seedMarketObjects: MarketObject[] = [
+  {
+    id: 'prop_depreciation_index',
+    name: '大宗工业不动产析权与折旧指标表',
+    description: '长三角及大湾区典型大宗工业物理资产司法扣减率、折余残值及成交均价走势系数',
+    fields: [
+      { key: 'city', label: '城市地区', type: 'string' },
+      { key: 'district', label: '核心片区', type: 'string' },
+      { key: 'assetType', label: '厂房类别', type: 'string' },
+      { key: 'dealPrice', label: '司法评估均价 (元/㎡)', type: 'number' },
+      { key: 'depreciationRate', label: '年均折旧扣除率 (%)', type: 'number' },
+      { key: 'lastChecked', label: '最新精算复核日', type: 'date' },
+    ],
+    rows: [
+      { id: 'row_1', city: '上海', district: '闵行莘庄装备园', assetType: '特大型机械装配气垫车间', dealPrice: 13500, depreciationRate: 4.2, lastChecked: '2026-05-10' },
+      { id: 'row_2', city: '苏州', district: '昆山极速先进工业区', assetType: '十万级精密半导体高洁无尘车间', dealPrice: 18900, depreciationRate: 6.5, lastChecked: '2026-05-18' },
+      { id: 'row_3', city: '深圳', district: '宝安空港智能拼装港', assetType: '钢混重承载高层工业冷链供应链仓', dealPrice: 15200, depreciationRate: 3.8, lastChecked: '2026-05-24' },
+      { id: 'row_4', city: '东莞', district: '松山湖前沿科技孵化带', assetType: '防静电锂电隔断特殊防爆生产线房', dealPrice: 11200, depreciationRate: 5.1, lastChecked: '2026-05-26' },
+    ],
+  },
+  {
+    id: 'amc_ltv_lines',
+    name: '金融资产重组 LTV 风险准入红线库',
+    description: '持牌 AMC 涉案重组非标抵质押资产的最高准入额度、强审配额及首封司法扣减限额表',
+    fields: [
+      { key: 'assetCategory', label: '抵质押押品细分类别', type: 'string' },
+      { key: 'maxLtv', label: '准入折价 LTV 上限 (%)', type: 'number' },
+      { key: 'riskBuffer', label: '强制性追索与缓释措施', type: 'string' },
+      { key: 'approvalAuthority', label: '最高审批审议决策会级别', type: 'string' },
+      { key: 'effectiveDate', label: '政策文号规范生效日期', type: 'date' },
+    ],
+    rows: [
+      { id: 'row_2_1', assetCategory: '特种出让工业土地（含附着建筑物）', maxLtv: 65, riskBuffer: '大债权人首封保护 + 土地剩余寿命检测 > 20年', approvalAuthority: '总部非标风控审议委员会', effectiveDate: '2025-10-12' },
+      { id: 'row_2_2', assetCategory: '地方在营及带核心租约高档写字楼', maxLtv: 55, riskBuffer: '流水分共管共处专户（AMC特权共管公章）', approvalAuthority: '各省级分公司决策常委会', effectiveDate: '2026-01-08' },
+      { id: 'row_2_3', assetCategory: '限制性涉诉在建普通住宅工程', maxLtv: 35, riskBuffer: '需地方党委防烂尾协调函 + AMC派驻共管监督章', approvalAuthority: '总部董事会特别质询委员会', effectiveDate: '2026-03-20' },
+    ],
   },
 ];
 

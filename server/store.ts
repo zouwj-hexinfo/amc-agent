@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { AMCProject, EvaluationRecord, KnowledgeItem } from '../src/types';
+import type { AMCProject, EvaluationRecord, KnowledgeAttachment, KnowledgeItem, KnowledgeWriteSuggestionReview, MarketObject } from '../src/types';
 import {
   createInitialAmcEvaluationState,
   reduceAmcEvaluationEvent,
@@ -20,7 +20,7 @@ import {
   type KnowledgeSearchResponse,
   type KnowledgeWriteSuggestion,
 } from './knowledge-orchestrator';
-import { seedKnowledgeBase, seedProjects } from './seed-data';
+import { seedKnowledgeBase, seedMarketObjects, seedProjects } from './seed-data';
 
 export type HermesEvent = AmcEvaluationEvent | AnalysisEvent;
 export type SequencedHermesEvent = { sequence: number; event: HermesEvent };
@@ -98,6 +98,18 @@ function runMigrations(store: Database) {
       json text not null,
       updated_at text not null
     );
+    create table if not exists knowledge_attachments (
+      id text primary key,
+      knowledge_id text not null,
+      json text not null,
+      parsed_text text,
+      updated_at text not null
+    );
+    create table if not exists market_objects (
+      id text primary key,
+      json text not null,
+      updated_at text not null
+    );
     create table if not exists evaluation_records (
       id text primary key,
       project_id text not null,
@@ -137,6 +149,8 @@ function seedDefaults() {
   if (projectCount === 0) seedProjects.forEach(upsertProject);
   const knowledgeCount = store.query<{ count: number }, []>('select count(*) as count from knowledge_items').get()?.count ?? 0;
   if (knowledgeCount === 0) seedKnowledgeBase.forEach(upsertKnowledgeItem);
+  const marketObjectCount = store.query<{ count: number }, []>('select count(*) as count from market_objects').get()?.count ?? 0;
+  if (marketObjectCount === 0) seedMarketObjects.forEach(upsertMarketObject);
 }
 
 export function generateAnalysisId() {
@@ -166,14 +180,128 @@ export function listKnowledgeItems() {
   return database()
     .query<JsonRow, []>('select * from knowledge_items order by updated_at asc')
     .all()
-    .map(row => JSON.parse(row.json) as KnowledgeItem);
+    .map(row => withKnowledgeAttachments(JSON.parse(row.json) as KnowledgeItem));
+}
+
+export function getKnowledgeItem(id: string) {
+  const row = database().query<JsonRow, [string]>('select * from knowledge_items where id = ?').get(id);
+  return row ? withKnowledgeAttachments(JSON.parse(row.json) as KnowledgeItem) : null;
+}
+
+export function searchKnowledgeItems(input: { category?: string; q?: string }) {
+  const query = input.q?.trim().toLowerCase();
+  return listKnowledgeItems().filter(item => {
+    if (input.category && input.category !== 'all' && item.category !== input.category) return false;
+    if (!query) return true;
+    return [
+      item.title,
+      item.content,
+      item.source || '',
+      item.tags.join(' '),
+      ...(item.attachments || []).map(attachment => `${attachment.fileName} ${attachment.parsedText || ''}`),
+    ].join(' ').toLowerCase().includes(query);
+  });
 }
 
 export function upsertKnowledgeItem(item: KnowledgeItem) {
+  const stored = { ...item };
+  delete stored.attachments;
   database()
     .query('insert into knowledge_items (id, json, updated_at) values (?, ?, ?) on conflict(id) do update set json = excluded.json, updated_at = excluded.updated_at')
-    .run(item.id, JSON.stringify(item), new Date().toISOString());
-  return item;
+    .run(stored.id, JSON.stringify(stored), new Date().toISOString());
+  return withKnowledgeAttachments(stored);
+}
+
+export function deleteKnowledgeItem(id: string) {
+  const store = database();
+  const existing = getKnowledgeItem(id);
+  if (!existing) return false;
+  store.query('delete from knowledge_attachments where knowledge_id = ?').run(id);
+  store.query('delete from knowledge_items where id = ?').run(id);
+  return true;
+}
+
+export function listKnowledgeAttachments(knowledgeId: string) {
+  return database()
+    .query<JsonRow, [string]>('select * from knowledge_attachments where knowledge_id = ? order by updated_at asc')
+    .all(knowledgeId)
+    .map(row => JSON.parse(row.json) as KnowledgeAttachment);
+}
+
+export function upsertKnowledgeAttachment(attachment: KnowledgeAttachment) {
+  database()
+    .query('insert into knowledge_attachments (id, knowledge_id, json, parsed_text, updated_at) values (?, ?, ?, ?, ?) on conflict(id) do update set json = excluded.json, parsed_text = excluded.parsed_text, updated_at = excluded.updated_at')
+    .run(attachment.id, attachment.knowledgeId, JSON.stringify(attachment), attachment.parsedText || null, new Date().toISOString());
+  return attachment;
+}
+
+export function deleteKnowledgeAttachment(knowledgeId: string, attachmentId: string) {
+  const result = database()
+    .query('delete from knowledge_attachments where knowledge_id = ? and id = ?')
+    .run(knowledgeId, attachmentId);
+  return result.changes > 0;
+}
+
+export function listMarketObjects() {
+  return database()
+    .query<JsonRow, []>('select * from market_objects order by updated_at asc')
+    .all()
+    .map(row => JSON.parse(row.json) as MarketObject);
+}
+
+export function getMarketObject(id: string) {
+  const row = database().query<JsonRow, [string]>('select * from market_objects where id = ?').get(id);
+  return row ? JSON.parse(row.json) as MarketObject : null;
+}
+
+export function upsertMarketObject(object: MarketObject) {
+  database()
+    .query('insert into market_objects (id, json, updated_at) values (?, ?, ?) on conflict(id) do update set json = excluded.json, updated_at = excluded.updated_at')
+    .run(object.id, JSON.stringify(object), new Date().toISOString());
+  return object;
+}
+
+export function deleteMarketObject(id: string) {
+  const result = database().query('delete from market_objects where id = ?').run(id);
+  return result.changes > 0;
+}
+
+export function resetMarketObjects() {
+  const store = database();
+  store.query('delete from market_objects').run();
+  seedMarketObjects.forEach(upsertMarketObject);
+  return listMarketObjects();
+}
+
+export function listKnowledgeWriteSuggestions() {
+  return database()
+    .query<AnalysisRow, []>('select * from analysis_records order by updated_at desc')
+    .all()
+    .flatMap(row => {
+      const metadata = row.metadata_json ? JSON.parse(row.metadata_json) as AnalysisRecord['metadata'] : undefined;
+      return (metadata?.knowledgeWriteSuggestions || []) as KnowledgeWriteSuggestionReview[];
+    });
+}
+
+export function updateKnowledgeWriteSuggestionStatus(suggestionId: string, status: KnowledgeWriteSuggestionReview['status']) {
+  const rows = database().query<AnalysisRow, []>('select * from analysis_records order by updated_at desc').all();
+  for (const row of rows) {
+    const metadata = row.metadata_json ? JSON.parse(row.metadata_json) as AnalysisRecord['metadata'] : undefined;
+    const suggestions = (metadata?.knowledgeWriteSuggestions || []) as KnowledgeWriteSuggestionReview[];
+    const index = suggestions.findIndex(suggestion => suggestion.id === suggestionId);
+    if (index < 0) continue;
+    const updated = { ...suggestions[index], status };
+    suggestions[index] = updated;
+    const nextMetadata = { ...metadata, knowledgeWriteSuggestions: suggestions };
+    database().query('update analysis_records set metadata_json = ?, updated_at = ? where analysis_id = ?')
+      .run(JSON.stringify(nextMetadata), new Date().toISOString(), row.analysis_id);
+    return updated;
+  }
+  return null;
+}
+
+function withKnowledgeAttachments(item: KnowledgeItem) {
+  return { ...item, attachments: listKnowledgeAttachments(item.id) };
 }
 
 export function createAnalysisRecord(input: {

@@ -1,5 +1,5 @@
 import React from "react";
-import { KnowledgeItem } from "../types";
+import { KnowledgeItem, KnowledgeWriteSuggestionReview } from "../types";
 import { 
   BookOpen, Search, PlusCircle, Scale, BarChart3, Database, MessageSquare, 
   ClipboardCheck, Briefcase, UploadCloud, FileText, Trash2, Paperclip, X 
@@ -9,11 +9,29 @@ import StructuredMarketView from "./StructuredMarketView";
 
 interface KnowledgeBaseViewProps {
   items: KnowledgeItem[];
-  onAddNewItem: (item: Omit<KnowledgeItem, 'id'>) => Promise<void>;
+  suggestions?: KnowledgeWriteSuggestionReview[];
+  onAddNewItem: (item: Omit<KnowledgeItem, 'id'>) => Promise<KnowledgeItem>;
+  onUpdateItem: (id: string, item: Omit<KnowledgeItem, 'id'>) => Promise<KnowledgeItem>;
+  onDeleteItem: (id: string) => Promise<void>;
+  onUploadAttachments: (id: string, files: File[]) => Promise<void>;
+  onDeleteAttachment: (knowledgeId: string, attachmentId: string) => Promise<void>;
+  onApproveSuggestion: (id: string) => Promise<void>;
+  onRejectSuggestion: (id: string) => Promise<void>;
   currentTheme?: any;
 }
 
-export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }: KnowledgeBaseViewProps) {
+export default function KnowledgeBaseView({
+  items,
+  suggestions = [],
+  onAddNewItem,
+  onUpdateItem,
+  onDeleteItem,
+  onUploadAttachments,
+  onDeleteAttachment,
+  onApproveSuggestion,
+  onRejectSuggestion,
+  currentTheme
+}: KnowledgeBaseViewProps) {
   const brandConfig: Record<string, {
     text: string;
     textDark: string;
@@ -122,38 +140,28 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
   const [selectedCat, setSelectedCat] = React.useState<KnowledgeItem['category'] | 'all'>("policies");
   const [searchVal, setSearchVal] = React.useState("");
   const [isAdding, setIsAdding] = React.useState(false);
+  const [editingItem, setEditingItem] = React.useState<KnowledgeItem | null>(null);
   const [selectedDetailItem, setSelectedDetailItem] = React.useState<KnowledgeItem | null>(null);
 
   const [marketRowsCount, setMarketRowsCount] = React.useState<number>(0);
 
   const updateMarketCount = React.useCallback(() => {
-    const cached = localStorage.getItem("amc_market_structured_db");
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed)) {
-          let total = 0;
-          parsed.forEach((obj: any) => {
-            if (obj && Array.isArray(obj.rows)) {
-              total += obj.rows.length;
-            }
-          });
-          setMarketRowsCount(total);
-          return;
-        }
-      } catch (e) {
-        console.error("Failed to parse market structured db for stats:", e);
-      }
-    }
-    // Fallback default
-    setMarketRowsCount(7);
+    fetch("/api/knowledge/market-objects")
+      .then(res => res.ok ? res.json() : [])
+      .then((objects: any[]) => setMarketRowsCount(objects.reduce((total, obj) => total + (Array.isArray(obj.rows) ? obj.rows.length : 0), 0)))
+      .catch(() => setMarketRowsCount(0));
   }, []);
 
   React.useEffect(() => {
     updateMarketCount();
-    window.addEventListener("amc_market_db_updated", updateMarketCount);
+    const listener = (event: Event) => {
+      const count = (event as CustomEvent).detail?.count;
+      if (typeof count === "number") setMarketRowsCount(count);
+      else updateMarketCount();
+    };
+    window.addEventListener("amc_market_db_updated", listener);
     return () => {
-      window.removeEventListener("amc_market_db_updated", updateMarketCount);
+      window.removeEventListener("amc_market_db_updated", listener);
     };
   }, [updateMarketCount]);
 
@@ -166,7 +174,7 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
   const [isSubmitting, setIsSubmitting] = React.useState(false);
 
   // Uploaded files and drag & drop states
-  const [uploadedFiles, setUploadedFiles] = React.useState<{ name: string; size: number }[]>([]);
+  const [uploadedFiles, setUploadedFiles] = React.useState<File[]>([]);
   const [dragActive, setDragActive] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -193,21 +201,14 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const newFiles = Array.from(e.dataTransfer.files).map((f: any) => ({
-        name: f.name,
-        size: f.size
-      }));
-      setUploadedFiles(prev => [...prev, ...newFiles]);
+      setUploadedFiles(prev => [...prev, ...Array.from(e.dataTransfer.files)]);
     }
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const newFiles = Array.from(e.target.files).map((f: any) => ({
-        name: f.name,
-        size: f.size
-      }));
-      setUploadedFiles(prev => [...prev, ...newFiles]);
+      setUploadedFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+      e.target.value = "";
     }
   };
 
@@ -220,7 +221,25 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
   };
 
   const handleOpenAddForm = () => {
+    setEditingItem(null);
     setFormCat(selectedCat !== "all" ? selectedCat : "policies");
+    setFormTitle("");
+    setFormContent("");
+    setFormTags("");
+    setFormSource("");
+    setUploadedFiles([]);
+    setIsAdding(true);
+  };
+
+  const handleOpenEditForm = (item: KnowledgeItem) => {
+    setEditingItem(item);
+    setFormCat(item.category);
+    setFormTitle(item.title);
+    setFormContent(item.content);
+    setFormTags(item.tags.join(", "));
+    setFormSource(item.source || "");
+    setUploadedFiles([]);
+    setSelectedDetailItem(null);
     setIsAdding(true);
   };
 
@@ -249,24 +268,24 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
 
     setIsSubmitting(true);
     try {
-      let finalContent = formContent;
-      if (uploadedFiles.length > 0) {
-        finalContent += `\n\n[已关联附件文档: ${uploadedFiles.map(f => `${f.name} (${formatBytes(f.size)})`).join(", ")}]`;
-      }
-
-      await onAddNewItem({
+      const payload = {
         title: formTitle,
         category: formCat,
-        content: finalContent,
-        tags: formTags || "新增法规",
+        content: formContent,
+        tags: parseTags(formTags),
         source: formSource || "用户添加"
-      });
+      };
+      const saved = editingItem
+        ? await onUpdateItem(editingItem.id, payload)
+        : await onAddNewItem(payload);
+      if (uploadedFiles.length > 0) await onUploadAttachments(saved.id, uploadedFiles);
       // Clear form
       setFormTitle("");
       setFormContent("");
       setFormTags("");
       setFormSource("");
       setUploadedFiles([]);
+      setEditingItem(null);
       setIsAdding(false);
     } catch (e) {
       console.error(e);
@@ -308,7 +327,7 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
           <div className="border-b border-slate-200/80 pb-3">
             <h4 className="font-extrabold text-sm text-slate-900 tracking-tight flex items-center gap-1.5">
               <PlusCircle className={`w-4 h-4 ${activeBrand.text}`} />
-              以文档为核心新建知识构建「{categoriesMap.find(c => c.key === formCat)?.label}」
+              {editingItem ? "编辑知识条目" : "以文档为核心新建知识构建"}「{categoriesMap.find(c => c.key === formCat)?.label}」
             </h4>
             <p className="text-[11px] text-slate-400 font-semibold mt-0.5">提供所需各项材料，系统在后台对多源信息、备注及附加文档智能建立词向量化</p>
           </div>
@@ -329,12 +348,12 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
             <div className="space-y-1">
               <label className="text-xs text-slate-600 font-bold flex items-center justify-between">
                 <span>所属分类元数据库</span>
-                <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded ${activeBrand.text} bg-${brandKey}-50`}>自动选中，只读</span>
+                <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded ${activeBrand.text} bg-${brandKey}-50`}>可维护</span>
               </label>
               <select
-                disabled
                 value={formCat}
-                className="w-full text-xs p-2.5 bg-slate-100 border border-slate-250 rounded-lg text-slate-500 font-bold cursor-not-allowed select-none opacity-90"
+                onChange={e => setFormCat(e.target.value as KnowledgeItem['category'])}
+                className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 font-bold"
               >
                 {categoriesMap.map(c => (
                   <option key={c.key} value={c.key}>{c.label}</option>
@@ -445,7 +464,7 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
               disabled={isSubmitting}
               className={`px-4 py-2.5 text-white font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-[0.98] cursor-pointer ${activeBrand.bgHover}`}
             >
-              {isSubmitting ? "正在导入物理大纲索引..." : "添加并导入为知识段 (Ingest)"}
+              {isSubmitting ? "正在保存知识与解析附件..." : editingItem ? "保存知识条目" : "添加并导入为知识段 (Ingest)"}
             </button>
             <button
               type="button"
@@ -455,6 +474,7 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
                 setFormTags("");
                 setFormSource("");
                 setUploadedFiles([]);
+                setEditingItem(null);
                 setIsAdding(false);
               }}
               className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold text-xs rounded-xl transition-all cursor-pointer"
@@ -523,6 +543,30 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
                   新增
                 </button>
               </div>
+
+              {suggestions.filter(item => item.status === "pending").length > 0 && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-amber-800">Hermes 建议知识待审核</span>
+                    <span className="text-[10px] font-bold text-amber-700">{suggestions.filter(item => item.status === "pending").length} 条</span>
+                  </div>
+                  {suggestions.filter(item => item.status === "pending").slice(0, 4).map(suggestion => (
+                    <div key={suggestion.id} className="bg-white/80 border border-amber-100 rounded-xl p-3 text-xs space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-extrabold text-slate-900">{suggestion.title}</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">{getCategoryLabel(suggestion.category)} · {suggestion.reason || "Hermes Agent 建议沉淀"}</p>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => onApproveSuggestion(suggestion.id)} className="px-2 py-1 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-500">批准</button>
+                          <button onClick={() => onRejectSuggestion(suggestion.id)} className="px-2 py-1 rounded-lg bg-slate-200 text-slate-700 font-bold hover:bg-slate-300">拒绝</button>
+                        </div>
+                      </div>
+                      <p className="text-slate-600 line-clamp-2">{suggestion.content}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {filteredItems.length === 0 ? (
                 <div className="py-12 text-center text-slate-400">
@@ -597,7 +641,32 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
                         >
                           点击标题或此处查看完整公文抽屉 &raquo;
                         </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenEditForm(item)}
+                            className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-amber-50 text-amber-700 font-bold"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (window.confirm(`确定删除知识条目「${item.title}」及其附件吗？`)) await onDeleteItem(item.id);
+                            }}
+                            className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-rose-50 text-rose-600 font-bold"
+                          >
+                            删除
+                          </button>
+                        </div>
                       </div>
+                      {(item.attachments || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 text-[10px]">
+                          {(item.attachments || []).map(attachment => (
+                            <span key={attachment.id} className={`px-2 py-0.5 rounded-md font-bold border ${attachment.parseStatus === "parsed" ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-rose-50 text-rose-700 border-rose-100"}`}>
+                              {attachment.fileName} · {attachment.parseStatus === "parsed" ? "已解析" : "解析失败"}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -723,35 +792,36 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
                   </span>
 
                   <div className="space-y-2">
-                    <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between text-xs hover:bg-slate-100/70 transition-colors">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-rose-500 flex-shrink-0" />
-                        <div>
-                          <p className="font-extrabold text-slate-800">
-                            【原始PDF】{selectedDetailItem.title}_原文章程底签件.pdf
-                          </p>
-                          <p className="text-[10px] text-slate-400 font-mono">2.4 MB · 司法凭证效力 · PDF加密签署</p>
-                        </div>
+                    {(selectedDetailItem.attachments || []).length === 0 ? (
+                      <div className="p-3 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-xs text-slate-400 font-bold">
+                        暂无真实上传附件。可点击“编辑”补充 PDF / DOCX / XLSX / TXT 等文件。
                       </div>
-                      <span className={`text-[10px] font-bold px-2 py-1 rounded cursor-pointer select-none flex-shrink-0 ${activeBrand.text} bg-${brandKey}-50 hover:bg-${brandKey}-100`}>
-                        查验凭证
-                      </span>
-                    </div>
-
-                    <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between text-xs hover:bg-slate-100/70 transition-colors">
-                      <div className="flex items-center gap-2">
-                        <FileText className={`w-4 h-4 flex-shrink-0 text-${brandKey}-500`} />
-                        <div>
-                          <p className="font-extrabold text-slate-800">
-                            【法律效力指引】{getCategoryLabel(selectedDetailItem.category)}_AMC准入及折扣率底稿.docx
-                          </p>
-                          <p className="text-[10px] text-slate-400 font-mono">812 KB · RAG智能归档 · Word修订版</p>
+                    ) : (
+                      (selectedDetailItem.attachments || []).map(attachment => (
+                        <div key={attachment.id} className="p-3 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between text-xs hover:bg-slate-100/70 transition-colors">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className={`w-4 h-4 flex-shrink-0 ${attachment.parseStatus === "parsed" ? activeBrand.text : "text-rose-500"}`} />
+                            <div className="min-w-0">
+                              <p className="font-extrabold text-slate-800 truncate">{attachment.fileName}</p>
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                {formatBytes(attachment.size)} · {attachment.mimeType || "unknown"} · {attachment.parseStatus === "parsed" ? "文本已入库检索" : `解析失败：${attachment.parseError || "未知错误"}`}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (window.confirm(`确定删除附件「${attachment.fileName}」吗？`)) {
+                                await onDeleteAttachment(selectedDetailItem.id, attachment.id);
+                                setSelectedDetailItem(null);
+                              }
+                            }}
+                            className="text-[10px] font-bold px-2 py-1 rounded cursor-pointer select-none flex-shrink-0 text-rose-600 bg-rose-50 hover:bg-rose-100"
+                          >
+                            删除附件
+                          </button>
                         </div>
-                      </div>
-                      <span className={`text-[10px] font-bold px-2 py-1 rounded cursor-pointer select-none flex-shrink-0 ${activeBrand.text} bg-${brandKey}-50 hover:bg-${brandKey}-100`}>
-                        查验凭证
-                      </span>
-                    </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>
@@ -775,4 +845,9 @@ export default function KnowledgeBaseView({ items, onAddNewItem, currentTheme }:
       </AnimatePresence>
     </div>
   );
+}
+
+function parseTags(value: string) {
+  const tags = value.split(/[、,，\s]+/).map(tag => tag.trim()).filter(Boolean);
+  return tags.length ? tags : ["新增法规"];
 }

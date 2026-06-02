@@ -11,7 +11,7 @@ import {
 import { 
   AMCProject, ProjectType, AgentType, AgentConfig, 
   EvaluationRecord, KnowledgeItem, QccResult, StockResult, ProjectFile,
-  ExecutionEvent, ExecutionStep, CommunicationBubble
+  ExecutionEvent, ExecutionStep, CommunicationBubble, KnowledgeWriteSuggestionReview
 } from "./types";
 
 import AgentSettings from "./components/AgentSettings";
@@ -544,6 +544,7 @@ export default function App() {
   
   // Knowledge base lists
   const [kbItems, setKbItems] = React.useState<KnowledgeItem[]>([]);
+  const [knowledgeSuggestions, setKnowledgeSuggestions] = React.useState<KnowledgeWriteSuggestionReview[]>([]);
   
   // Agent prompt and settings configurations
   const [agentConfigs, setAgentConfigs] = React.useState<AgentConfig[]>(DEFAULT_AGENTS);
@@ -855,6 +856,12 @@ export default function App() {
       const kbRes = await fetch("/api/knowledge");
       const kbData: KnowledgeItem[] = await kbRes.json();
       setKbItems(kbData);
+
+      const suggestionRes = await fetch("/api/knowledge/suggestions");
+      if (suggestionRes.ok) {
+        const suggestionData: KnowledgeWriteSuggestionReview[] = await suggestionRes.json();
+        setKnowledgeSuggestions(suggestionData);
+      }
 
       const analysisRes = await fetch("/api/analysis/recent?limit=20");
       if (analysisRes.ok) {
@@ -1612,6 +1619,15 @@ ${selectedTextStr}
     }
   };
 
+  const reloadKnowledgeData = async () => {
+    const [kbRes, suggestionRes] = await Promise.all([
+      fetch("/api/knowledge"),
+      fetch("/api/knowledge/suggestions"),
+    ]);
+    if (kbRes.ok) setKbItems(await kbRes.json());
+    if (suggestionRes.ok) setKnowledgeSuggestions(await suggestionRes.json());
+  };
+
   const handleUpdateKnowledge = async (newItem: Omit<KnowledgeItem, 'id'>) => {
     try {
       const res = await fetch("/api/knowledge", {
@@ -1619,11 +1635,85 @@ ${selectedTextStr}
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newItem)
       });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "知识条目创建失败");
       const added: KnowledgeItem = await res.json();
       setKbItems(prev => [...prev, added]);
+      return added;
     } catch (err) {
       console.error(err);
+      addToast("知识条目保存失败，请稍后重试。", "error");
+      throw err;
     }
+  };
+
+  const handleEditKnowledge = async (id: string, item: Omit<KnowledgeItem, 'id'>) => {
+    const res = await fetch(`/api/knowledge/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(item),
+    });
+    if (!res.ok) {
+      addToast("知识条目更新失败。", "error");
+      throw new Error((await res.json().catch(() => ({}))).error || "知识条目更新失败");
+    }
+    const updated: KnowledgeItem = await res.json();
+    setKbItems(prev => prev.map(existing => existing.id === updated.id ? updated : existing));
+    addToast("知识条目已更新。", "success");
+    return updated;
+  };
+
+  const handleDeleteKnowledge = async (id: string) => {
+    const res = await fetch(`/api/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) {
+      addToast("知识条目删除失败。", "error");
+      throw new Error((await res.json().catch(() => ({}))).error || "知识条目删除失败");
+    }
+    setKbItems(prev => prev.filter(item => item.id !== id));
+    addToast("知识条目及附件已删除。", "success");
+  };
+
+  const handleUploadKnowledgeAttachments = async (id: string, files: File[]) => {
+    for (const file of files) {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/knowledge/${encodeURIComponent(id)}/attachments`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `附件 ${file.name} 上传失败`);
+    }
+    await reloadKnowledgeData();
+    addToast("附件已上传并完成解析入库。", "success");
+  };
+
+  const handleDeleteKnowledgeAttachment = async (knowledgeId: string, attachmentId: string) => {
+    const res = await fetch(`/api/knowledge/${encodeURIComponent(knowledgeId)}/attachments/${encodeURIComponent(attachmentId)}`, { method: "DELETE" });
+    if (!res.ok) {
+      addToast("附件删除失败。", "error");
+      throw new Error((await res.json().catch(() => ({}))).error || "附件删除失败");
+    }
+    await reloadKnowledgeData();
+    addToast("附件已删除。", "success");
+  };
+
+  const handleApproveKnowledgeSuggestion = async (id: string) => {
+    const res = await fetch(`/api/knowledge/suggestions/${encodeURIComponent(id)}/approve`, { method: "POST" });
+    if (!res.ok) {
+      addToast("建议入库失败。", "error");
+      throw new Error((await res.json().catch(() => ({}))).error || "建议入库失败");
+    }
+    await reloadKnowledgeData();
+    addToast("Hermes 建议已批准并写入正式知识库。", "success");
+  };
+
+  const handleRejectKnowledgeSuggestion = async (id: string) => {
+    const res = await fetch(`/api/knowledge/suggestions/${encodeURIComponent(id)}/reject`, { method: "POST" });
+    if (!res.ok) {
+      addToast("建议拒绝失败。", "error");
+      throw new Error((await res.json().catch(() => ({}))).error || "建议拒绝失败");
+    }
+    await reloadKnowledgeData();
+    addToast("Hermes 建议已拒绝。", "success");
   };
 
   // Automated document tag selector
@@ -2229,7 +2319,14 @@ ${selectedTextStr}
                   {activeTab === 'knowledge' && (
                     <KnowledgeBaseView
                       items={kbItems}
+                      suggestions={knowledgeSuggestions}
                       onAddNewItem={handleUpdateKnowledge}
+                      onUpdateItem={handleEditKnowledge}
+                      onDeleteItem={handleDeleteKnowledge}
+                      onUploadAttachments={handleUploadKnowledgeAttachments}
+                      onDeleteAttachment={handleDeleteKnowledgeAttachment}
+                      onApproveSuggestion={handleApproveKnowledgeSuggestion}
+                      onRejectSuggestion={handleRejectKnowledgeSuggestion}
                       currentTheme={currentTheme}
                     />
                   )}

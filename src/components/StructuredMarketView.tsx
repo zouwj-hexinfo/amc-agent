@@ -3,59 +3,7 @@ import {
   Table, Plus, Trash2, Edit3, Settings, AlertCircle, RefreshCw, 
   Search, Check, Grid, Sliders, Calendar, FolderPlus, Info, Save, X, Layers
 } from "lucide-react";
-
-export interface MarketField {
-  key: string;       // e.g. "price"
-  label: string;     // e.g. "评估成交均价"
-  type: "string" | "number" | "date";
-}
-
-export interface MarketObject {
-  id: string;
-  name: string;      // e.g. "大宗工业不动产折旧指标"
-  description: string;
-  fields: MarketField[];
-  rows: Record<string, any>[];
-}
-
-const PRESET_MARKET_OBJECTS: MarketObject[] = [
-  {
-    id: "prop_depreciation_index",
-    name: "大宗工业不动产析权与折旧指标表",
-    description: "长三角及大湾区典型大宗工业物理资产司法扣减率、折余残值及成交均价走势系数",
-    fields: [
-      { key: "city", label: "城市地区", type: "string" },
-      { key: "district", label: "核心片区", type: "string" },
-      { key: "assetType", label: "厂房类别", type: "string" },
-      { key: "dealPrice", label: "司法评估均价 (元/㎡)", type: "number" },
-      { key: "depreciationRate", label: "年均折旧扣除率 (%)", type: "number" },
-      { key: "lastChecked", label: "最新精算复核日", type: "date" }
-    ],
-    rows: [
-      { id: "row_1", city: "上海", district: "闵行莘庄装备园", assetType: "特大型机械装配气垫车间", dealPrice: 13500, depreciationRate: 4.2, lastChecked: "2026-05-10" },
-      { id: "row_2", city: "苏州", district: "昆山极速先进工业区", assetType: "十万级精密半导体高洁无尘车间", dealPrice: 18900, depreciationRate: 6.5, lastChecked: "2026-05-18" },
-      { id: "row_3", city: "深圳", district: "宝安空港智能拼装港", assetType: "钢混重承载高层工业冷链供应链仓", dealPrice: 15200, depreciationRate: 3.8, lastChecked: "2026-05-24" },
-      { id: "row_4", city: "东莞", district: "松山湖前沿科技孵化带", assetType: "防静电锂电隔断特殊防爆生产线房", dealPrice: 11200, depreciationRate: 5.1, lastChecked: "2026-05-26" }
-    ]
-  },
-  {
-    id: "amc_ltv_lines",
-    name: "金融资产重组 LTV 风险准入红线库",
-    description: "持牌 AMC 涉案重组非标抵质押资产的最高准入额度、强审配额及首封司法扣减限额表",
-    fields: [
-      { key: "assetCategory", label: "抵质押押品细分类别", type: "string" },
-      { key: "maxLtv", label: "准入折价 LTV 上限 (%)", type: "number" },
-      { key: "riskBuffer", label: "强制性追索与缓释措施", type: "string" },
-      { key: "approvalAuthority", label: "最高审批审议决策会级别", type: "string" },
-      { key: "effectiveDate", label: "政策文号规范生效日期", type: "date" }
-    ],
-    rows: [
-      { id: "row_2_1", assetCategory: "特种出让工业土地（含附着建筑物）", maxLtv: 65, riskBuffer: "大债权人首封保护 + 土地剩余寿命检测 > 20年", approvalAuthority: "总部非标风控审议委员会", effectiveDate: "2025-10-12" },
-      { id: "row_2_2", assetCategory: "地方在营及带核心租约高档写字楼", maxLtv: 55, riskBuffer: "流水分共管共处专户（AMC特权共管公章）", approvalAuthority: "各省级分公司决策常委会", effectiveDate: "2026-01-08" },
-      { id: "row_2_3", assetCategory: "限制性涉诉在建普通住宅工程", maxLtv: 35, riskBuffer: "需地方党委防烂尾协调函 + AMC派驻共管监督章", approvalAuthority: "总部董事会特别质询委员会", effectiveDate: "2026-03-20" }
-    ]
-  }
-];
+import type { MarketField, MarketObject } from "../types";
 
 export default function StructuredMarketView() {
   const [objects, setObjects] = React.useState<MarketObject[]>([]);
@@ -90,40 +38,52 @@ export default function StructuredMarketView() {
     }, 4000);
   };
 
-  // Initialize state from localStorage or load presets
-  React.useEffect(() => {
-    const cached = localStorage.getItem("amc_market_structured_db");
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setObjects(parsed);
-          setSelectedObjId(parsed[0].id);
-          window.dispatchEvent(new Event("amc_market_db_updated"));
-          return;
-        }
-      } catch (e) {
-        console.error("解析缓存结构化市场数据库失效，重置预设", e);
-      }
+  const loadMarketObjects = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/knowledge/market-objects");
+      if (!res.ok) throw new Error("市场数据库读取失败");
+      const data: MarketObject[] = await res.json();
+      setObjects(data);
+      setSelectedObjId(prev => data.some(obj => obj.id === prev) ? prev : (data[0]?.id || ""));
+      window.dispatchEvent(new CustomEvent("amc_market_db_updated", { detail: { count: countMarketRows(data) } }));
+    } catch (error) {
+      console.error(error);
+      showToast("结构化市场数据库读取失败，请稍后重试。", true);
     }
-    // Fallback to presets
-    setObjects(PRESET_MARKET_OBJECTS);
-    setSelectedObjId(PRESET_MARKET_OBJECTS[0].id);
-    localStorage.setItem("amc_market_structured_db", JSON.stringify(PRESET_MARKET_OBJECTS));
-    window.dispatchEvent(new Event("amc_market_db_updated"));
   }, []);
 
-  const saveToStorage = (updated: MarketObject[]) => {
+  React.useEffect(() => {
+    loadMarketObjects();
+  }, [loadMarketObjects]);
+
+  const saveObjectToApi = async (object: MarketObject) => {
+    const res = await fetch(`/api/knowledge/market-objects/${encodeURIComponent(object.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(object),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "市场对象保存失败");
+    const saved: MarketObject = await res.json();
+    const updated = objects.map(obj => obj.id === saved.id ? saved : obj);
     setObjects(updated);
-    localStorage.setItem("amc_market_structured_db", JSON.stringify(updated));
-    window.dispatchEvent(new Event("amc_market_db_updated"));
+    window.dispatchEvent(new CustomEvent("amc_market_db_updated", { detail: { count: countMarketRows(updated) } }));
+    return saved;
   };
 
-  const handleResetToPresets = () => {
+  const handleResetToPresets = async () => {
     if (window.confirm("确定要恢复出厂原预设的数据对象吗？此操作会重置您自定义的所有字段和元数据数据记录。")) {
-      saveToStorage(PRESET_MARKET_OBJECTS);
-      setSelectedObjId(PRESET_MARKET_OBJECTS[0].id);
-      showToast("已成功重置初始化八维合规元数据库预设!", false);
+      try {
+        const res = await fetch("/api/knowledge/market-objects/reset", { method: "POST" });
+        if (!res.ok) throw new Error("市场对象重置失败");
+        const data: MarketObject[] = await res.json();
+        setObjects(data);
+        setSelectedObjId(data[0]?.id || "");
+        window.dispatchEvent(new CustomEvent("amc_market_db_updated", { detail: { count: countMarketRows(data) } }));
+        showToast("已成功重置初始化八维合规元数据库预设!", false);
+      } catch (error) {
+        console.error(error);
+        showToast("恢复预设失败，请稍后重试。", true);
+      }
     }
   };
 
@@ -202,7 +162,7 @@ export default function StructuredMarketView() {
     setEditObjFields(prev => prev.filter(f => f.key !== key));
   };
 
-  const handleUpdateObjectModel = (e: React.FormEvent) => {
+  const handleUpdateObjectModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeObject) return;
     if (!editObjName.trim()) {
@@ -214,42 +174,36 @@ export default function StructuredMarketView() {
       return;
     }
 
-    const updated = objects.map(o => {
-      if (o.id === activeObject.id) {
-        const adjustedRows = o.rows.map(row => {
-          const newRow: Record<string, any> = { id: row.id };
-          editObjFields.forEach(f => {
-            if (row[f.key] !== undefined) {
-              if (f.type === "number") {
-                newRow[f.key] = isNaN(Number(row[f.key])) ? 0 : Number(row[f.key]);
-              } else {
-                newRow[f.key] = row[f.key];
-              }
-            } else {
-              newRow[f.key] = f.type === "number" ? 0 : (f.type === "date" ? "" : "");
-            }
-          });
-          return newRow;
-        });
-
-        return {
-          ...o,
-          name: editObjName.trim(),
-          description: editObjDesc.trim(),
-          fields: editObjFields,
-          rows: adjustedRows
-        };
-      }
-      return o;
+    const adjustedRows = activeObject.rows.map(row => {
+      const newRow: Record<string, any> = { id: row.id };
+      editObjFields.forEach(f => {
+        if (row[f.key] !== undefined) {
+          newRow[f.key] = f.type === "number" ? (isNaN(Number(row[f.key])) ? 0 : Number(row[f.key])) : row[f.key];
+        } else {
+          newRow[f.key] = f.type === "number" ? 0 : "";
+        }
+      });
+      return newRow;
     });
 
-    saveToStorage(updated);
-    setIsEditingObj(false);
-    showToast(`对结构化市场对象 [${editObjName}] 模型更新及行数据字段自动关联完毕!`);
+    try {
+      await saveObjectToApi({
+        ...activeObject,
+        name: editObjName.trim(),
+        description: editObjDesc.trim(),
+        fields: editObjFields,
+        rows: adjustedRows
+      });
+      setIsEditingObj(false);
+      showToast(`对结构化市场对象 [${editObjName}] 模型更新及行数据字段自动关联完毕!`);
+    } catch (error) {
+      console.error(error);
+      showToast("市场对象模型保存失败。", true);
+    }
   };
 
   // Submit completely new market object model
-  const handleCreateObjectModel = (e: React.FormEvent) => {
+  const handleCreateObjectModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newObjName.trim()) {
       showToast("市场对象中文统称不能为空", true);
@@ -269,28 +223,47 @@ export default function StructuredMarketView() {
       rows: []
     };
 
-    const updated = [...objects, newObj];
-    saveToStorage(updated);
-    setSelectedObjId(uniqueId);
-    
-    // reset form
-    setNewObjName("");
-    setNewObjDesc("");
-    setNewObjFields([{ key: "name", label: "名称", type: "string" }]);
-    setIsCreatingObj(false);
-    showToast(`新的结构化市场对象 [${newObj.name}] 在线建模架构成功!`);
+    try {
+      const res = await fetch("/api/knowledge/market-objects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newObj),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "市场对象创建失败");
+      const saved: MarketObject = await res.json();
+      const updated = [...objects, saved];
+      setObjects(updated);
+      window.dispatchEvent(new CustomEvent("amc_market_db_updated", { detail: { count: countMarketRows(updated) } }));
+      setSelectedObjId(saved.id);
+      setNewObjName("");
+      setNewObjDesc("");
+      setNewObjFields([{ key: "name", label: "名称", type: "string" }]);
+      setIsCreatingObj(false);
+      showToast(`新的结构化市场对象 [${saved.name}] 在线建模架构成功!`);
+    } catch (error) {
+      console.error(error);
+      showToast("市场对象创建失败，请稍后重试。", true);
+    }
   };
 
-  const handleDeleteObject = (id: string) => {
+  const handleDeleteObject = async (id: string) => {
     if (objects.length <= 1) {
       showToast("必须至少保留一个核心结构化业务分析对象!", true);
       return;
     }
     if (window.confirm("极度警告：确认要永久销毁此字段的定义元数据结构模型及该类目下的所有数据记录吗？此过程不可逆。")) {
-      const remaining = objects.filter(o => o.id !== id);
-      saveToStorage(remaining);
-      setSelectedObjId(remaining[0].id);
-      showToast("已销毁指定的市场要素数据库实体和它的所有属性行");
+      try {
+        const res = await fetch(`/api/knowledge/market-objects/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "市场对象删除失败");
+        const remaining = objects.filter(o => o.id !== id);
+        setObjects(remaining);
+        window.dispatchEvent(new CustomEvent("amc_market_db_updated", { detail: { count: countMarketRows(remaining) } }));
+        setSelectedObjId(remaining[0].id);
+        showToast("已销毁指定的市场要素数据库实体和它的所有属性行");
+      } catch (error) {
+        console.error(error);
+        showToast("市场对象删除失败，请稍后重试。", true);
+      }
     }
   };
 
@@ -318,55 +291,44 @@ export default function StructuredMarketView() {
     setIsEditingRow(true);
   };
 
-  const handleDeleteRow = (rowId: string) => {
+  const handleDeleteRow = async (rowId: string) => {
     if (!activeObject) return;
     if (window.confirm("确定要删除这条维护的数据记录吗？")) {
-      const updatedRows = activeObject.rows.filter(r => r.id !== rowId);
-      const updatedObjs = objects.map(o => {
-        if (o.id === activeObject.id) {
-          return { ...o, rows: updatedRows };
-        }
-        return o;
-      });
-      saveToStorage(updatedObjs);
-      showToast("已剔除该行指标数据。");
+      try {
+        await saveObjectToApi({ ...activeObject, rows: activeObject.rows.filter(r => r.id !== rowId) });
+        showToast("已剔除该行指标数据。");
+      } catch (error) {
+        console.error(error);
+        showToast("删除行数据失败。", true);
+      }
     }
   };
 
-  const handleSaveRowSubmit = (e: React.FormEvent) => {
+  const handleSaveRowSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeObject) return;
 
-    let updatedObjs: MarketObject[];
+    let updatedObject: MarketObject;
     if (activeRowId === null) {
       // Adding new record
       const newRowId = `row_${Date.now()}`;
       const newRow = { id: newRowId, ...rowFormData };
-      
-      updatedObjs = objects.map(o => {
-        if (o.id === activeObject.id) {
-          return { ...o, rows: [...o.rows, newRow] };
-        }
-        return o;
-      });
+      updatedObject = { ...activeObject, rows: [...activeObject.rows, newRow] };
       showToast("添加新指标参数并计算分析模型完毕!", false);
     } else {
       // Editing existing record
-      updatedObjs = objects.map(o => {
-        if (o.id === activeObject.id) {
-          return {
-            ...o,
-            rows: o.rows.map(r => r.id === activeRowId ? { ...r, ...rowFormData } : r)
-          };
-        }
-        return o;
-      });
+      updatedObject = { ...activeObject, rows: activeObject.rows.map(r => r.id === activeRowId ? { ...r, ...rowFormData } : r) };
       showToast("修改选定指标行成功，评估上下文已更新!", false);
     }
 
-    saveToStorage(updatedObjs);
-    setIsEditingRow(false);
-    setActiveRowId(null);
+    try {
+      await saveObjectToApi(updatedObject);
+      setIsEditingRow(false);
+      setActiveRowId(null);
+    } catch (error) {
+      console.error(error);
+      showToast("保存行数据失败。", true);
+    }
   };
 
   // Filter rows based on search
@@ -975,4 +937,8 @@ export default function StructuredMarketView() {
 
     </div>
   );
+}
+
+function countMarketRows(objects: MarketObject[]) {
+  return objects.reduce((total, object) => total + (Array.isArray(object.rows) ? object.rows.length : 0), 0);
 }

@@ -1,21 +1,34 @@
 import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { cors } from 'hono/cors';
-import type { AMCProject, AgentType, EvaluationRecord, KnowledgeItem, ProjectFile, ProjectType } from '../src/types';
+import type { AMCProject, AgentType, EvaluationRecord, KnowledgeItem, MarketObject, ProjectFile, ProjectType } from '../src/types';
 import type { StartAnalysisRequest } from '../src/hermes/types';
 import { createAnalysisEventHub } from './analysis-event-hub';
 import {
   addEvaluationRecord,
   appendAnalysisEvent,
   createAnalysisRecord,
+  deleteKnowledgeAttachment,
+  deleteKnowledgeItem,
+  deleteMarketObject,
   generateAnalysisId,
+  getKnowledgeItem,
   getAnalysisRecord,
   getLatestAnalysisRecord,
+  getMarketObject,
   getProject,
+  listKnowledgeAttachments,
   listKnowledgeItems,
+  listKnowledgeWriteSuggestions,
+  listMarketObjects,
   listProjects,
   listRecentAnalysisRecords,
+  resetMarketObjects,
+  searchKnowledgeItems,
+  updateKnowledgeWriteSuggestionStatus,
+  upsertKnowledgeAttachment,
   upsertKnowledgeItem,
+  upsertMarketObject,
   upsertProject,
   type HermesEvent,
 } from './store';
@@ -42,6 +55,7 @@ import {
   formatKnowledgeContext,
   retrieveKnowledge,
 } from './knowledge-orchestrator';
+import { parseKnowledgeAttachmentFile } from './knowledge-attachment-parser';
 
 const app = new Hono();
 const hermesAvailable = process.env.HERMES_AGENT_DISABLED !== '1';
@@ -459,20 +473,116 @@ app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
   return c.json({ error: 'Evaluation record not found' }, 404);
 });
 
-app.get('/api/knowledge', (c) => c.json(listKnowledgeItems()));
+app.get('/api/knowledge', (c) => {
+  return c.json(searchKnowledgeItems({
+    category: c.req.query('category'),
+    q: c.req.query('q'),
+  }));
+});
 
 app.post('/api/knowledge', async (c) => {
   const body = await c.req.json<Omit<KnowledgeItem, 'id'> & { id?: string }>();
-  if (!body.category || !body.title || !body.content) return c.json({ error: 'Missing required fields' }, 400);
-  const item: KnowledgeItem = {
-    id: body.id || `kn-${Date.now()}`,
-    category: body.category,
-    title: body.title,
-    content: body.content,
-    tags: Array.isArray(body.tags) ? body.tags : [],
-    source: body.source,
-  };
+  const item = normalizeKnowledgeItem(body);
+  if (!item) return c.json({ error: 'Missing required fields' }, 400);
   return c.json(upsertKnowledgeItem(item), 201);
+});
+
+app.put('/api/knowledge/:id', async (c) => {
+  const existing = getKnowledgeItem(c.req.param('id'));
+  if (!existing) return c.json({ error: 'Knowledge item not found' }, 404);
+  const body = await c.req.json<Partial<KnowledgeItem>>();
+  const item = normalizeKnowledgeItem({ ...existing, ...body, id: existing.id });
+  if (!item) return c.json({ error: 'Missing required fields' }, 400);
+  return c.json(upsertKnowledgeItem(item));
+});
+
+app.delete('/api/knowledge/:id', (c) => {
+  if (!deleteKnowledgeItem(c.req.param('id'))) return c.json({ error: 'Knowledge item not found' }, 404);
+  return c.json({ success: true });
+});
+
+app.get('/api/knowledge/:id/attachments', (c) => {
+  if (!getKnowledgeItem(c.req.param('id'))) return c.json({ error: 'Knowledge item not found' }, 404);
+  return c.json(listKnowledgeAttachments(c.req.param('id')));
+});
+
+app.post('/api/knowledge/:id/attachments', async (c) => {
+  const item = getKnowledgeItem(c.req.param('id'));
+  if (!item) return c.json({ error: 'Knowledge item not found' }, 404);
+  const body = await c.req.parseBody();
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: 'Missing multipart file field named file' }, 400);
+  const maxSize = Number(process.env.KNOWLEDGE_ATTACHMENT_MAX_BYTES || 10 * 1024 * 1024);
+  if (file.size > maxSize) return c.json({ error: `File exceeds ${maxSize} byte limit` }, 413);
+
+  const parsed = await parseKnowledgeAttachmentFile(file);
+  const attachment = upsertKnowledgeAttachment({
+    id: `katt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    knowledgeId: item.id,
+    fileName: file.name || '未命名附件',
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    parseStatus: parsed.parseStatus,
+    parsedText: parsed.parsedText,
+    parseError: parsed.parseError,
+    uploadedAt: new Date().toISOString(),
+  });
+  return c.json(attachment, 201);
+});
+
+app.delete('/api/knowledge/:id/attachments/:attachmentId', (c) => {
+  if (!deleteKnowledgeAttachment(c.req.param('id'), c.req.param('attachmentId'))) return c.json({ error: 'Attachment not found' }, 404);
+  return c.json({ success: true });
+});
+
+app.get('/api/knowledge/market-objects', (c) => c.json(listMarketObjects()));
+
+app.post('/api/knowledge/market-objects', async (c) => {
+  const body = await c.req.json<Partial<MarketObject>>();
+  const object = normalizeMarketObject(body);
+  if (!object) return c.json({ error: 'Invalid market object' }, 400);
+  return c.json(upsertMarketObject(object), 201);
+});
+
+app.put('/api/knowledge/market-objects/:id', async (c) => {
+  if (!getMarketObject(c.req.param('id'))) return c.json({ error: 'Market object not found' }, 404);
+  const body = await c.req.json<Partial<MarketObject>>();
+  const object = normalizeMarketObject({ ...body, id: c.req.param('id') });
+  if (!object) return c.json({ error: 'Invalid market object' }, 400);
+  return c.json(upsertMarketObject(object));
+});
+
+app.delete('/api/knowledge/market-objects/:id', (c) => {
+  if (listMarketObjects().length <= 1) return c.json({ error: 'At least one market object is required' }, 400);
+  if (!deleteMarketObject(c.req.param('id'))) return c.json({ error: 'Market object not found' }, 404);
+  return c.json({ success: true });
+});
+
+app.post('/api/knowledge/market-objects/reset', (c) => c.json(resetMarketObjects()));
+
+app.get('/api/knowledge/suggestions', (c) => c.json(listKnowledgeWriteSuggestions()));
+
+app.post('/api/knowledge/suggestions/:id/approve', (c) => {
+  const current = listKnowledgeWriteSuggestions().find(item => item.id === c.req.param('id'));
+  if (!current) return c.json({ error: 'Suggestion not found' }, 404);
+  if (!current.title || !current.content || current.status === 'invalid') return c.json({ error: 'Suggestion is invalid' }, 400);
+  const suggestion = updateKnowledgeWriteSuggestionStatus(c.req.param('id'), 'approved');
+  if (!suggestion) return c.json({ error: 'Suggestion not found' }, 404);
+  const item = upsertKnowledgeItem({
+    id: `kn-sugg-${Date.now()}`,
+    category: current.category,
+    title: current.title,
+    content: current.content,
+    tags: current.tags || [],
+    source: current.source || 'Hermes Agent 建议入库',
+  });
+  return c.json({ success: true, suggestion, item });
+});
+
+app.post('/api/knowledge/suggestions/:id/reject', (c) => {
+  const suggestion = updateKnowledgeWriteSuggestionStatus(c.req.param('id'), 'rejected');
+  if (!suggestion) return c.json({ error: 'Suggestion not found' }, 404);
+  return c.json({ success: true, suggestion });
 });
 
 app.get('/api/qcc', (c) => {
@@ -568,6 +678,62 @@ function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruct
       '4. 如形成可复用经验，只能输出 knowledge_write_suggestion 协议块，不能声称已写入正式知识库。',
     ].join('\n'),
   ].filter(Boolean).join('\n');
+}
+
+function normalizeKnowledgeItem(body: Partial<KnowledgeItem> & { id?: string }): KnowledgeItem | null {
+  if (!body.category || !body.title?.trim() || !body.content?.trim()) return null;
+  const category = body.category;
+  if (!['policies', 'legal', 'market', 'cases', 'methodology', 'internal_policies', 'industry', 'feedback'].includes(category)) return null;
+  return {
+    id: body.id || `kn-${Date.now()}`,
+    category,
+    title: body.title.trim(),
+    content: body.content.trim(),
+    tags: normalizeTags((body as { tags?: unknown }).tags),
+    source: body.source?.trim() || undefined,
+  };
+}
+
+function normalizeTags(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).map(tag => tag.trim()).filter(Boolean);
+  if (typeof value === 'string') return value.split(/[、,，\s]+/).map(tag => tag.trim()).filter(Boolean);
+  return [];
+}
+
+function normalizeMarketObject(body: Partial<MarketObject>): MarketObject | null {
+  if (!body.name?.trim()) return null;
+  const fields = Array.isArray(body.fields)
+    ? body.fields
+        .filter(field => field?.key && field?.label && ['string', 'number', 'date'].includes(field.type))
+        .map(field => ({
+          key: String(field.key).replace(/[^a-zA-Z0-9_]/g, ''),
+          label: String(field.label).trim(),
+          type: field.type,
+        }))
+        .filter(field => field.key && field.label)
+    : [];
+  if (!fields.length) return null;
+  return {
+    id: body.id || `market-${Date.now()}`,
+    name: body.name.trim(),
+    description: body.description?.trim() || '',
+    fields,
+    rows: Array.isArray(body.rows) ? body.rows.map(row => normalizeMarketRow(row, fields)) : [],
+  };
+}
+
+function normalizeMarketRow(row: Record<string, unknown>, fields: MarketObject['fields']) {
+  const id = typeof row.id === 'string' && row.id.trim() ? row.id.trim() : `row-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const next: Record<string, unknown> = { id };
+  fields.forEach(field => {
+    const value = row[field.key];
+    next[field.key] = field.type === 'number'
+      ? Number(value) || 0
+      : value === undefined || value === null
+        ? ''
+        : String(value);
+  });
+  return next;
 }
 
 function findSensitiveWords(project: AMCProject) {

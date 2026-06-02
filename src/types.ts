@@ -90,6 +90,47 @@ export interface KnowledgeItem {
   content: string;
   tags: string[];
   source?: string;
+  attachments?: KnowledgeAttachment[];
+}
+
+export interface KnowledgeAttachment {
+  id: string;
+  knowledgeId: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  parseStatus: 'parsed' | 'failed';
+  parsedText?: string;
+  parseError?: string;
+  uploadedAt: string;
+}
+
+export interface KnowledgeWriteSuggestionReview {
+  id: string;
+  analysisId?: string;
+  runId?: string;
+  category: KnowledgeItem['category'];
+  title: string;
+  content: string;
+  tags: string[];
+  source?: string;
+  reason?: string;
+  status: 'pending' | 'approved' | 'rejected' | 'invalid';
+  createdAt: string;
+}
+
+export interface MarketField {
+  key: string;
+  label: string;
+  type: 'string' | 'number' | 'date';
+}
+
+export interface MarketObject {
+  id: string;
+  name: string;
+  description: string;
+  fields: MarketField[];
+  rows: Record<string, any>[];
 }
 
 export interface QccResult {
