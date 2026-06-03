@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { AMCProject, EvaluationRecord, KnowledgeAttachment, KnowledgeItem, KnowledgeWriteSuggestionReview, MarketObject } from '../src/types';
+import type { AMCProject, EvaluationRecord, KnowledgeAttachment, KnowledgeItem, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
 import {
   createInitialAmcEvaluationState,
   reduceAmcEvaluationEvent,
@@ -93,6 +93,13 @@ function runMigrations(store: Database) {
       json text not null,
       updated_at text not null
     );
+    create table if not exists report_revisions (
+      id text primary key,
+      project_id text not null,
+      record_id text not null,
+      json text not null,
+      created_at text not null
+    );
     create table if not exists knowledge_items (
       id text primary key,
       json text not null,
@@ -173,7 +180,59 @@ export function upsertProject(project: AMCProject) {
   database()
     .query('insert into projects (id, json, updated_at) values (?, ?, ?) on conflict(id) do update set json = excluded.json, updated_at = excluded.updated_at')
     .run(project.id, JSON.stringify(project), project.updatedAt || new Date().toISOString());
+  (project.files || []).forEach(file => upsertProjectFile(project.id, file));
   return project;
+}
+
+export function listProjectFiles(projectId: string) {
+  return database()
+    .query<JsonRow, [string]>('select * from project_files where project_id = ? order by updated_at asc')
+    .all(projectId)
+    .map(row => JSON.parse(row.json) as ProjectFile);
+}
+
+export function upsertProjectFile(projectId: string, file: ProjectFile) {
+  database()
+    .query('insert into project_files (id, project_id, json, updated_at) values (?, ?, ?, ?) on conflict(id) do update set project_id = excluded.project_id, json = excluded.json, updated_at = excluded.updated_at')
+    .run(file.id, projectId, JSON.stringify(file), file.uploadedAt || new Date().toISOString());
+  return file;
+}
+
+export function deleteProjectFile(projectId: string, fileId: string) {
+  const result = database()
+    .query('delete from project_files where project_id = ? and id = ?')
+    .run(projectId, fileId);
+  return result.changes > 0;
+}
+
+export function listReportRevisions(input: { projectId?: string; recordId?: string } = {}) {
+  let rows: JsonRow[];
+  if (input.projectId && input.recordId) {
+    rows = database()
+      .query<JsonRow, [string, string]>('select id, json, created_at as updated_at from report_revisions where project_id = ? and record_id = ? order by created_at desc')
+      .all(input.projectId, input.recordId);
+  } else if (input.projectId) {
+    rows = database()
+      .query<JsonRow, [string]>('select id, json, created_at as updated_at from report_revisions where project_id = ? order by created_at desc')
+      .all(input.projectId);
+  } else {
+    rows = database()
+      .query<JsonRow, []>('select id, json, created_at as updated_at from report_revisions order by created_at desc')
+      .all();
+  }
+  return rows.map(row => JSON.parse(row.json) as ReportRevision);
+}
+
+export function upsertReportRevision(revision: ReportRevision) {
+  database()
+    .query('insert into report_revisions (id, project_id, record_id, json, created_at) values (?, ?, ?, ?, ?) on conflict(id) do update set project_id = excluded.project_id, record_id = excluded.record_id, json = excluded.json, created_at = excluded.created_at')
+    .run(revision.id, revision.projectId, revision.recordId, JSON.stringify(revision), revision.createdAt);
+  return revision;
+}
+
+export function deleteReportRevision(id: string) {
+  const result = database().query('delete from report_revisions where id = ?').run(id);
+  return result.changes > 0;
 }
 
 export function listKnowledgeItems() {

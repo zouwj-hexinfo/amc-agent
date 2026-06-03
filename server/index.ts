@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
+import type { HonoRequest } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { cors } from 'hono/cors';
-import type { AMCProject, AgentType, EvaluationRecord, KnowledgeAttachmentPreview, KnowledgeItem, MarketObject, ProjectFile, ProjectType } from '../src/types';
+import type { AMCProject, AgentType, EvaluationRecord, KnowledgeAttachmentPreview, KnowledgeItem, MarketObject, ProjectFile, ProjectType, ReportRevision } from '../src/types';
 import type { StartAnalysisRequest } from '../src/hermes/types';
 import { createAnalysisEventHub } from './analysis-event-hub';
 import {
@@ -11,6 +12,8 @@ import {
   deleteKnowledgeAttachment,
   deleteKnowledgeItem,
   deleteMarketObject,
+  deleteProjectFile,
+  deleteReportRevision,
   generateAnalysisId,
   getKnowledgeItem,
   getAnalysisRecord,
@@ -23,13 +26,16 @@ import {
   listMarketObjects,
   listProjects,
   listRecentAnalysisRecords,
+  listReportRevisions,
   resetMarketObjects,
   searchKnowledgeItems,
   updateKnowledgeWriteSuggestionStatus,
   upsertKnowledgeAttachment,
   upsertKnowledgeItem,
   upsertMarketObject,
+  upsertProjectFile,
   upsertProject,
+  upsertReportRevision,
   type HermesEvent,
 } from './store';
 import { qccDatabase, stockDatabase } from './seed-data';
@@ -288,18 +294,16 @@ app.post('/api/projects', async (c) => {
 app.post('/api/projects/:id/files', async (c) => {
   const project = getProject(c.req.param('id'));
   if (!project) return c.json({ error: 'Project not found' }, 404);
-  const body = await c.req.json<Partial<ProjectFile>>();
-  const newFile: ProjectFile = {
-    id: body.id || `file-${Date.now()}`,
-    name: body.name || '未命名文档.txt',
-    size: Number(body.size) || 2048,
-    type: body.type || 'Other',
-    uploadedAt: new Date().toISOString(),
-    contentSnippet: body.contentSnippet || '此文件包含该资产标的或抵质押登记的权属信息、租约及流水核对数据。',
-  };
+  let newFile: ProjectFile;
+  try {
+    newFile = await readProjectFileUpload(c.req);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'File upload failed' }, 400);
+  }
   project.files = [...(project.files || []), newFile];
   project.status = project.status === 'Draft' ? 'DataCollected' : project.status;
   project.updatedAt = new Date().toISOString();
+  upsertProjectFile(project.id, newFile);
   upsertProject(project);
   return c.json(newFile, 201);
 });
@@ -309,6 +313,7 @@ app.delete('/api/projects/:id/files/:fileId', (c) => {
   if (!project) return c.json({ error: 'Project not found' }, 404);
   project.files = project.files.filter(file => file.id !== c.req.param('fileId'));
   project.updatedAt = new Date().toISOString();
+  deleteProjectFile(project.id, c.req.param('fileId'));
   upsertProject(project);
   return c.json({ success: true });
 });
@@ -431,6 +436,37 @@ app.put('/api/projects/:id/evaluations/:evalId/status', async (c) => {
   return c.json({ success: true, record: updated });
 });
 
+app.get('/api/revisions', (c) => {
+  return c.json(listReportRevisions({
+    projectId: c.req.query('projectId'),
+    recordId: c.req.query('recordId'),
+  }));
+});
+
+app.post('/api/revisions', async (c) => {
+  const body = await c.req.json<Partial<ReportRevision>>();
+  if (!body.projectId || !body.recordId || !body.originalText || !body.tunedText || !body.instruction || !body.category) {
+    return c.json({ error: 'Missing required revision fields' }, 400);
+  }
+  const revision: ReportRevision = {
+    id: body.id || `rev-${Date.now()}`,
+    projectId: body.projectId,
+    recordId: body.recordId,
+    originalText: body.originalText,
+    tunedText: body.tunedText,
+    instruction: body.instruction,
+    createdAt: body.createdAt || new Date().toISOString(),
+    category: body.category,
+    originalContentSnapshot: body.originalContentSnapshot,
+  };
+  return c.json(upsertReportRevision(revision), 201);
+});
+
+app.delete('/api/revisions/:id', (c) => {
+  if (!deleteReportRevision(c.req.param('id'))) return c.json({ error: 'Revision not found' }, 404);
+  return c.json({ success: true });
+});
+
 app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
   const project = getProject(c.req.param('id'));
   if (!project) return c.json({ error: 'Project not found' }, 404);
@@ -445,6 +481,7 @@ app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
     const index = list.findIndex(record => record.id === evalId);
     if (index >= 0) {
       foundEval = { ...list[index] };
+      const originalContentSnapshot = foundEval.content;
       let tunedText: string;
       try {
         tunedText = await tuneParagraphWithHermes(project, foundEval, selectedText, instruction);
@@ -464,9 +501,20 @@ app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
         source: '用户选中微调反馈',
       };
       upsertKnowledgeItem(feedbackItem);
+      const revision = upsertReportRevision({
+        id: `rev-${Date.now()}`,
+        projectId: project.id,
+        recordId: foundEval.id,
+        originalText: selectedText,
+        tunedText,
+        instruction,
+        createdAt: new Date().toISOString(),
+        category: foundEval.agentType,
+        originalContentSnapshot,
+      });
       project.updatedAt = new Date().toISOString();
       upsertProject(project);
-      return c.json({ success: true, isHermes: true, record: foundEval, feedbackItem, tunedText });
+      return c.json({ success: true, isHermes: true, record: foundEval, feedbackItem, tunedText, revision });
     }
   }
 
@@ -496,15 +544,44 @@ app.post('/api/knowledge/attachments/preview', async (c) => {
   const oversized = files.find(file => file.size > maxSize);
   if (oversized) return c.json({ error: `File ${oversized.name} exceeds ${maxSize} byte limit` }, 413);
   const fallbackPreview = await previewKnowledgeAttachmentFiles(files);
-  if (!hermesAvailable) return c.json(fallbackPreview);
+  const sessionId = `knowledge-preview-${Date.now()}`;
+  logKnowledgePreviewHermesDebug('fallback-ready', sessionId, {
+    files: summarizeKnowledgePreviewFiles(fallbackPreview),
+    fallback: summarizeKnowledgePreviewFields(fallbackPreview),
+  });
+  if (!hermesAvailable) {
+    logKnowledgePreviewHermesDebug('skipped', sessionId, { reason: 'Hermes Agent API disabled' });
+    return c.json(fallbackPreview);
+  }
   try {
+    const prompt = buildKnowledgeAttachmentPreviewPrompt(fallbackPreview);
+    const startedAt = Date.now();
+    logKnowledgePreviewHermesDebug('request', sessionId, {
+      endpoint: `${hermesBaseUrl()}/v1/chat/completions`,
+      model: hermesModel(),
+      promptLength: prompt.length,
+      promptExcerpt: excerptForLog(prompt, knowledgePreviewDebugFullTextEnabled() ? 4000 : 700),
+    });
     const hermesText = await askHermes({
-      prompt: buildKnowledgeAttachmentPreviewPrompt(fallbackPreview),
-      sessionId: `knowledge-preview-${Date.now()}`,
+      prompt,
+      sessionId,
       conversationTitle: '知识库附件字段预解析',
     });
-    return c.json(mergeHermesKnowledgeAttachmentPreview(fallbackPreview, hermesText));
+    logKnowledgePreviewHermesDebug('response', sessionId, {
+      elapsedMs: Date.now() - startedAt,
+      outputLength: hermesText.length,
+      outputExcerpt: excerptForLog(hermesText, knowledgePreviewDebugFullTextEnabled() ? 4000 : 1200),
+    });
+    const mergedPreview = mergeHermesKnowledgeAttachmentPreview(fallbackPreview, hermesText);
+    logKnowledgePreviewHermesDebug('merged', sessionId, {
+      merged: summarizeKnowledgePreviewFields(mergedPreview),
+    });
+    return c.json(mergedPreview);
   } catch (error) {
+    logKnowledgePreviewHermesDebug('failed', sessionId, {
+      error: error instanceof Error ? error.message : String(error),
+      fallback: summarizeKnowledgePreviewFields(fallbackPreview),
+    });
     console.error('Hermes knowledge attachment preview failed:', error);
     return c.json(fallbackPreview);
   }
@@ -717,6 +794,50 @@ function normalizeKnowledgeItem(body: Partial<KnowledgeItem> & { id?: string }):
   };
 }
 
+async function readProjectFileUpload(req: HonoRequest): Promise<ProjectFile> {
+  const uploadedAt = new Date().toISOString();
+  const contentType = req.header('Content-Type') || req.header('content-type') || '';
+  if (contentType.includes('multipart/form-data')) {
+    const body = await req.parseBody();
+    const rawFile = body.file ?? body.files;
+    const file = (Array.isArray(rawFile) ? rawFile[0] : rawFile) as File | undefined;
+    if (!(file instanceof File)) throw new Error('Missing multipart file field named file');
+    const maxSize = Number(process.env.PROJECT_FILE_MAX_BYTES || process.env.KNOWLEDGE_ATTACHMENT_MAX_BYTES || 10 * 1024 * 1024);
+    if (file.size > maxSize) throw new Error(`File ${file.name} exceeds ${maxSize} byte limit`);
+    const type = String(body.type || 'Other');
+    const parsed = await parseKnowledgeAttachmentFile(file);
+    const parsedText = parsed.parsedText || '';
+    return {
+      id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: file.name || '未命名文档',
+      size: file.size,
+      type,
+      uploadedAt,
+      contentSnippet: parsedText
+        ? parsedText.slice(0, 1200)
+        : `项目资料附件[${file.name || '未命名文档'}]解析失败：${parsed.parseError || '未能解析出文本内容'}`,
+      mimeType: file.type || 'application/octet-stream',
+      parseStatus: parsed.parseStatus,
+      parsedText: parsed.parsedText,
+      parseError: parsed.parseError,
+    };
+  }
+
+  const body = await req.json<Partial<ProjectFile>>();
+  return {
+    id: body.id || `file-${Date.now()}`,
+    name: body.name || '未命名文档.txt',
+    size: Number(body.size) || 2048,
+    type: body.type || 'Other',
+    uploadedAt,
+    contentSnippet: body.contentSnippet || '此文件包含该资产标的或抵质押登记的权属信息、租约及流水核对数据。',
+    mimeType: body.mimeType,
+    parseStatus: body.parseStatus,
+    parsedText: body.parsedText,
+    parseError: body.parseError,
+  };
+}
+
 function buildKnowledgeAttachmentPreviewPrompt(preview: KnowledgeAttachmentPreview) {
   return [
     '你是 AMC 不良资产知识库入库助手。请根据附件解析文本，提取知识库维护表单的 4 个字段。',
@@ -734,6 +855,46 @@ function buildKnowledgeAttachmentPreviewPrompt(preview: KnowledgeAttachmentPrevi
     '【附件解析文本】',
     (preview.content || '').slice(0, 12000),
   ].join('\n');
+}
+
+function logKnowledgePreviewHermesDebug(stage: string, sessionId: string, payload: Record<string, unknown>) {
+  if (process.env.HERMES_KNOWLEDGE_PREVIEW_DEBUG === '0') return;
+  console.info(`[HermesKnowledgePreview:${stage}]`, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    sessionId,
+    ...payload,
+  }, null, 2));
+}
+
+function summarizeKnowledgePreviewFiles(preview: KnowledgeAttachmentPreview) {
+  return preview.files.map(file => ({
+    fileName: file.fileName,
+    mimeType: file.mimeType,
+    size: file.size,
+    parseStatus: file.parseStatus,
+    parseError: file.parseError,
+    parsedTextExcerpt: file.parsedTextExcerpt ? excerptForLog(file.parsedTextExcerpt, 220) : undefined,
+  }));
+}
+
+function summarizeKnowledgePreviewFields(preview: KnowledgeAttachmentPreview) {
+  return {
+    title: preview.title,
+    category: preview.category,
+    tags: preview.tags,
+    source: preview.source,
+    contentLength: preview.content.length,
+    contentExcerpt: excerptForLog(preview.content, knowledgePreviewDebugFullTextEnabled() ? 4000 : 500),
+  };
+}
+
+function knowledgePreviewDebugFullTextEnabled() {
+  return process.env.HERMES_KNOWLEDGE_PREVIEW_DEBUG_FULL === '1';
+}
+
+function excerptForLog(value: string, limit: number) {
+  const clean = value.replace(/\s+/g, ' ').trim();
+  return clean.length > limit ? `${clean.slice(0, limit)}...` : clean;
 }
 
 function normalizeTags(value: unknown) {

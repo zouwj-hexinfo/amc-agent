@@ -92,82 +92,187 @@ export async function askHermes(input: HermesChatInput) {
     .filter(message => (message.role === 'user' || message.role === 'assistant') && message.content.trim())
     .slice(-12);
 
-  const response = await fetch(`${hermesBaseUrl()}/v1/chat/completions`, {
+  const url = `${hermesBaseUrl()}/v1/chat/completions`;
+  const payload = {
+    model: hermesModel(),
+    stream: false,
+    ...(input.sessionId ? { session_id: input.sessionId } : {}),
+    ...(input.conversationTitle ? { title: input.conversationTitle } : {}),
+    messages: [
+      {
+        role: 'system',
+        content: '你是 AMC 不良资产协作评估助手。回答保持专业、简洁，明确区分事实、推断和待核查事项。',
+      },
+      ...history,
+      { role: 'user', content: input.prompt },
+    ] satisfies ChatMessage[],
+  };
+  const startedAt = Date.now();
+  logHermesDebug('request', {
+    operation: 'chat',
     method: 'POST',
-    headers: hermesHeaders(),
-    body: JSON.stringify({
-      model: hermesModel(),
-      stream: false,
-      ...(input.sessionId ? { session_id: input.sessionId } : {}),
-      ...(input.conversationTitle ? { title: input.conversationTitle } : {}),
-      messages: [
-        {
-          role: 'system',
-          content: '你是 AMC 不良资产协作评估助手。回答保持专业、简洁，明确区分事实、推断和待核查事项。',
-        },
-        ...history,
-        { role: 'user', content: input.prompt },
-      ] satisfies ChatMessage[],
-    }),
+    url,
+    model: payload.model,
+    sessionId: input.sessionId,
+    conversationTitle: input.conversationTitle,
+    historyCount: history.length,
+    promptLength: input.prompt.length,
+    promptExcerpt: excerptForHermesLog(input.prompt, hermesDebugFullTextEnabled() ? 4000 : 700),
   });
 
-  const data = await parseHermesResponse<HermesChatResponse>(response, 'Hermes chat');
-  const content = data.choices?.[0]?.message?.content;
-  if (typeof content === 'string' && content.trim()) return content.trim();
-  throw new Error('Hermes response did not include assistant text');
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: hermesHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const data = await parseHermesResponse<HermesChatResponse>(response, 'Hermes chat');
+    const content = data.choices?.[0]?.message?.content;
+    logHermesDebug('response', {
+      operation: 'chat',
+      status: response.status,
+      elapsedMs: Date.now() - startedAt,
+      choiceCount: data.choices?.length ?? 0,
+      outputLength: typeof content === 'string' ? content.length : 0,
+      outputExcerpt: typeof content === 'string'
+        ? excerptForHermesLog(content, hermesDebugFullTextEnabled() ? 4000 : 1000)
+        : undefined,
+    });
+    if (typeof content === 'string' && content.trim()) return content.trim();
+    throw new Error('Hermes response did not include assistant text');
+  } catch (error) {
+    logHermesDebug('failed', {
+      operation: 'chat',
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function createHermesRun(input: HermesRunInput) {
-  const response = await fetch(`${hermesBaseUrl()}/v1/runs`, {
+  const url = `${hermesBaseUrl()}/v1/runs`;
+  const payload = withoutUndefined({
+    model: hermesModel(),
+    input: input.input,
+    session_id: input.sessionId,
+    instructions: input.instructions,
+    conversation_history: input.conversationHistory,
+    previous_response_id: input.previousResponseId,
+  });
+  const startedAt = Date.now();
+  logHermesDebug('request', {
+    operation: 'run.create',
     method: 'POST',
-    headers: hermesHeaders(),
-    body: JSON.stringify(withoutUndefined({
-      model: hermesModel(),
-      input: input.input,
-      session_id: input.sessionId,
-      instructions: input.instructions,
-      conversation_history: input.conversationHistory,
-      previous_response_id: input.previousResponseId,
-    })),
+    url,
+    model: payload.model,
+    sessionId: input.sessionId,
+    inputLength: input.input.length,
+    inputExcerpt: excerptForHermesLog(input.input, hermesDebugFullTextEnabled() ? 4000 : 700),
+    instructionsLength: input.instructions?.length ?? 0,
+    instructionsExcerpt: input.instructions
+      ? excerptForHermesLog(input.instructions, hermesDebugFullTextEnabled() ? 4000 : 500)
+      : undefined,
+    historyCount: input.conversationHistory?.length ?? 0,
+    previousResponseId: input.previousResponseId,
   });
 
-  return await parseHermesResponse<HermesRun>(response, 'Hermes run creation');
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: hermesHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const run = await parseHermesResponse<HermesRun>(response, 'Hermes run creation');
+    logHermesDebug('response', {
+      operation: 'run.create',
+      status: response.status,
+      elapsedMs: Date.now() - startedAt,
+      runId: run.run_id,
+      runStatus: run.status,
+      outputSummary: summarizeUnknownForHermesLog(run.output),
+    });
+    return run;
+  } catch (error) {
+    logHermesDebug('failed', {
+      operation: 'run.create',
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function getHermesRun(runId: string) {
-  const response = await fetch(`${hermesBaseUrl()}/v1/runs/${encodeURIComponent(runId)}`, {
-    method: 'GET',
-    headers: hermesHeaders(),
-  });
-  return await parseHermesResponse<HermesRun>(response, 'Hermes run lookup');
+  const url = `${hermesBaseUrl()}/v1/runs/${encodeURIComponent(runId)}`;
+  return await hermesRunRequest('run.lookup', url, 'GET', runId);
 }
 
 export async function stopHermesRun(runId: string) {
-  const response = await fetch(`${hermesBaseUrl()}/v1/runs/${encodeURIComponent(runId)}/stop`, {
-    method: 'POST',
-    headers: hermesHeaders(),
-  });
-  return await parseHermesResponse<HermesRun>(response, 'Hermes run stop');
+  const url = `${hermesBaseUrl()}/v1/runs/${encodeURIComponent(runId)}/stop`;
+  return await hermesRunRequest('run.stop', url, 'POST', runId);
 }
 
 export async function approveHermesRunAction(runId: string, reason?: string) {
   const endpoint = (process.env.HERMES_AGENT_APPROVAL_ENDPOINT || '/v1/runs/{runId}/approve')
     .replace('{runId}', encodeURIComponent(runId));
   const url = endpoint.startsWith('http') ? endpoint : `${hermesBaseUrl()}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
-  const response = await fetch(url, {
-    method: process.env.HERMES_AGENT_APPROVAL_METHOD || 'POST',
-    headers: hermesHeaders(),
-    body: JSON.stringify({
-      approve: true,
-      action: 'continue',
-      reason: reason || '用户确认继续处理',
-    }),
+  const method = process.env.HERMES_AGENT_APPROVAL_METHOD || 'POST';
+  const payload = {
+    approve: true,
+    action: 'continue',
+    reason: reason || '用户确认继续处理',
+  };
+  const startedAt = Date.now();
+  logHermesDebug('request', {
+    operation: 'run.approve',
+    method,
+    url,
+    runId,
+    reasonLength: payload.reason.length,
+    reasonExcerpt: excerptForHermesLog(payload.reason, 240),
   });
-  return await parseHermesResponse<HermesRun>(response, 'Hermes run approval');
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: hermesHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const run = await parseHermesResponse<HermesRun>(response, 'Hermes run approval');
+    logHermesDebug('response', {
+      operation: 'run.approve',
+      status: response.status,
+      elapsedMs: Date.now() - startedAt,
+      runId: run.run_id,
+      runStatus: run.status,
+      outputSummary: summarizeUnknownForHermesLog(run.output),
+    });
+    return run;
+  } catch (error) {
+    logHermesDebug('failed', {
+      operation: 'run.approve',
+      runId,
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function* streamHermesRunEvents(runId: string, signal?: AbortSignal): AsyncGenerator<AnalysisEvent> {
-  const response = await fetch(`${hermesBaseUrl()}/v1/runs/${encodeURIComponent(runId)}/events`, {
+  const url = `${hermesBaseUrl()}/v1/runs/${encodeURIComponent(runId)}/events`;
+  const startedAt = Date.now();
+  logHermesDebug('request', {
+    operation: 'run.events',
+    method: 'GET',
+    url,
+    runId,
+  });
+
+  const response = await fetch(url, {
     method: 'GET',
     headers: hermesHeaders(),
     signal,
@@ -175,13 +280,28 @@ export async function* streamHermesRunEvents(runId: string, signal?: AbortSignal
 
   if (!response.ok) {
     const detail = await safeHermesErrorDetail(response);
+    logHermesDebug('failed', {
+      operation: 'run.events',
+      runId,
+      status: response.status,
+      elapsedMs: Date.now() - startedAt,
+      error: detail || `HTTP ${response.status}`,
+    });
     throw new Error(`Hermes run event stream failed with ${response.status}${detail ? `: ${detail}` : ''}`);
   }
   if (!response.body) throw new Error('Hermes run event stream did not include a response body');
+  logHermesDebug('response', {
+    operation: 'run.events',
+    runId,
+    status: response.status,
+    elapsedMs: Date.now() - startedAt,
+    connected: true,
+  });
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let eventCount = 0;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -190,12 +310,26 @@ export async function* streamHermesRunEvents(runId: string, signal?: AbortSignal
     const records = buffer.split(/\r?\n\r?\n/);
     buffer = records.pop() ?? '';
     for (const record of records) {
-      for (const event of parseHermesRunSsePayload(record)) yield await enrichCompletedRunEvent(event);
+      for (const event of parseHermesRunSsePayload(record)) {
+        eventCount += 1;
+        logHermesDebug('sse-event', summarizeHermesEventForLog(runId, eventCount, event));
+        yield await enrichCompletedRunEvent(event);
+      }
     }
   }
 
   buffer += decoder.decode();
-  for (const event of parseHermesRunSsePayload(buffer)) yield await enrichCompletedRunEvent(event);
+  for (const event of parseHermesRunSsePayload(buffer)) {
+    eventCount += 1;
+    logHermesDebug('sse-event', summarizeHermesEventForLog(runId, eventCount, event));
+    yield await enrichCompletedRunEvent(event);
+  }
+  logHermesDebug('stream-completed', {
+    operation: 'run.events',
+    runId,
+    elapsedMs: Date.now() - startedAt,
+    eventCount,
+  });
 }
 
 export function parseHermesRunSsePayload(payload: string): AnalysisEvent[] {
@@ -332,12 +466,146 @@ export function extractReportMarkdownS3Uri(value: string) {
     ?? value.match(/s3:\/\/[^\s`，。；;、)）\]]+\/xfas\/reports\/[^\s`，。；;、)）\]]+\.md/)?.[0];
 }
 
+async function hermesRunRequest(operation: string, url: string, method: 'GET' | 'POST', runId: string) {
+  const startedAt = Date.now();
+  logHermesDebug('request', {
+    operation,
+    method,
+    url,
+    runId,
+  });
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: hermesHeaders(),
+    });
+    const run = await parseHermesResponse<HermesRun>(response, `Hermes ${operation}`);
+    logHermesDebug('response', {
+      operation,
+      status: response.status,
+      elapsedMs: Date.now() - startedAt,
+      runId: run.run_id,
+      runStatus: run.status,
+      outputSummary: summarizeUnknownForHermesLog(run.output),
+      lastEventSummary: summarizeUnknownForHermesLog(run.last_event),
+    });
+    return run;
+  } catch (error) {
+    logHermesDebug('failed', {
+      operation,
+      runId,
+      elapsedMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
 async function parseHermesResponse<T>(response: Response, label: string) {
   if (!response.ok) {
     const detail = await safeHermesErrorDetail(response);
     throw new Error(`${label} failed with ${response.status}${detail ? `: ${detail}` : ''}`);
   }
   return await response.json() as T;
+}
+
+function logHermesDebug(stage: string, payload: Record<string, unknown>) {
+  if (process.env.HERMES_AGENT_DEBUG === '0') return;
+  console.info(`[HermesAgent:${stage}]`, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    ...payload,
+  }, null, 2));
+}
+
+function hermesDebugFullTextEnabled() {
+  return process.env.HERMES_AGENT_DEBUG_FULL === '1';
+}
+
+function excerptForHermesLog(value: string, limit: number) {
+  const clean = userFacingHermesText(value).replace(/\s+/g, ' ').trim();
+  return clean.length > limit ? `${clean.slice(0, limit)}...` : clean;
+}
+
+function summarizeUnknownForHermesLog(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = textValue(value);
+  if (text) {
+    return {
+      kind: typeof value,
+      textLength: text.length,
+      textExcerpt: excerptForHermesLog(text, hermesDebugFullTextEnabled() ? 4000 : 500),
+    };
+  }
+  if (Array.isArray(value)) {
+    return {
+      kind: 'array',
+      length: value.length,
+    };
+  }
+  if (isRecord(value)) {
+    return {
+      kind: 'object',
+      keys: Object.keys(value).slice(0, 12),
+    };
+  }
+  return {
+    kind: typeof value,
+    value,
+  };
+}
+
+function summarizeHermesEventForLog(runId: string, sequence: number, event: AnalysisEvent) {
+  const base = {
+    operation: 'run.events',
+    runId,
+    sequence,
+    eventType: event.type,
+  };
+  switch (event.type) {
+    case 'hermes.output.delta':
+      return {
+        ...base,
+        agentId: event.agentId,
+        textLength: event.text.length,
+        textExcerpt: excerptForHermesLog(event.text, hermesDebugFullTextEnabled() ? 1200 : 180),
+      };
+    case 'hermes.run.completed':
+      return {
+        ...base,
+        outputLength: event.output.length,
+        outputExcerpt: excerptForHermesLog(event.output, hermesDebugFullTextEnabled() ? 2000 : 260),
+      };
+    case 'analysis.failed':
+      return {
+        ...base,
+        agentId: event.agentId,
+        message: excerptForHermesLog(event.message, 260),
+      };
+    case 'analysis.requires_action':
+      return {
+        ...base,
+        agentId: event.agentId,
+        toolName: event.toolName,
+        message: excerptForHermesLog(event.message, 260),
+      };
+    case 'agent.started':
+    case 'agent.progress':
+      return {
+        ...base,
+        agentId: event.agentId,
+        action: event.action,
+        snippet: event.snippet ? excerptForHermesLog(event.snippet, 220) : undefined,
+      };
+    case 'hermes.tool.progress':
+      return {
+        ...base,
+        toolName: event.toolName,
+        label: event.label,
+      };
+    default:
+      return base;
+  }
 }
 
 async function safeHermesErrorDetail(response: Response) {

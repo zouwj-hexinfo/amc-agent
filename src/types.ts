@@ -32,6 +32,22 @@ export interface ProjectFile {
   type: string; // 'DD_Report' | 'Financial' | 'Ownership' | 'Other'
   uploadedAt: string;
   contentSnippet: string;
+  mimeType?: string;
+  parseStatus?: 'parsed' | 'failed';
+  parsedText?: string;
+  parseError?: string;
+}
+
+export interface ReportRevision {
+  id: string;
+  projectId: string;
+  recordId: string;
+  originalText: string;
+  tunedText: string;
+  instruction: string;
+  createdAt: string;
+  category: string;
+  originalContentSnapshot?: string;
 }
 
 export type AgentType = 'law_review' | 'risk_review' | 'evaluation' | 'industry' | 'orchestrator';

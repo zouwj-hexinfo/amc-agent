@@ -6,7 +6,13 @@
 import { HermesClient } from './client'
 import type { StartAnalysisRequest } from './types'
 import type { AmcEvaluationEvent } from './amc-agents'
-import { AmcKnowledgeBaseClient, AmcExternalDataClient, type KnowledgeBaseQuery } from './amc-knowledge-base'
+
+export type KnowledgeBaseQuery = {
+  keywords: string[]
+  category?: string
+  limit?: number
+  minRelevance?: number
+}
 
 // ===== AMC评估请求类型 =====
 
@@ -33,15 +39,11 @@ export type AmcEvaluationOptions = {
 export class AmcEvaluationClient {
   private baseUrl: string
   private hermesClient: HermesClient
-  private knowledgeBaseClient: AmcKnowledgeBaseClient
-  private externalDataClient: AmcExternalDataClient
   private evaluationSubscriptions: Map<string, () => void> = new Map()
 
   constructor(baseUrl = 'http://localhost:3000') {
     this.baseUrl = baseUrl
     this.hermesClient = new HermesClient(baseUrl)
-    this.knowledgeBaseClient = new AmcKnowledgeBaseClient(baseUrl)
-    this.externalDataClient = new AmcExternalDataClient(baseUrl)
   }
 
   /**
@@ -178,10 +180,20 @@ export class AmcEvaluationClient {
    */
   async queryKnowledgeBase(knowledgeBase: string, query: KnowledgeBaseQuery) {
     try {
-      return await this.knowledgeBaseClient.searchKnowledgeBase(
-        knowledgeBase as any,
-        query
-      )
+      const params = new URLSearchParams();
+      if (query.category || knowledgeBase) params.set('category', query.category || knowledgeBase);
+      if (query.keywords.length) params.set('q', query.keywords.join(' '));
+      const response = await fetch(`${this.baseUrl}/api/knowledge?${params.toString()}`);
+      if (!response.ok) throw new Error(`知识库查询失败: ${response.statusText}`);
+      const results = await response.json();
+      const limited = Array.isArray(results) ? results.slice(0, query.limit || 10) : [];
+      return {
+        query,
+        source: knowledgeBase,
+        results: limited,
+        totalResults: Array.isArray(results) ? results.length : 0,
+        executionTime: 0,
+      };
     } catch (error) {
       throw new Error(`知识库查询失败: ${error instanceof Error ? error.message : '未知错误'}`)
     }
@@ -192,7 +204,9 @@ export class AmcEvaluationClient {
    */
   async queryEnterpriseInfo(enterpriseId: string) {
     try {
-      return await this.externalDataClient.queryQicchacha(enterpriseId)
+      const response = await fetch(`${this.baseUrl}/api/qcc?query=${encodeURIComponent(enterpriseId)}`)
+      if (!response.ok) throw new Error(`企查查查询失败: ${response.statusText}`)
+      return await response.json()
     } catch (error) {
       throw new Error(`企业信息查询失败: ${error instanceof Error ? error.message : '未知错误'}`)
     }
@@ -203,7 +217,12 @@ export class AmcEvaluationClient {
    */
   async getMarketData(symbols: string[], metrics?: string[]) {
     try {
-      return await this.externalDataClient.getStockMarketData(symbols, metrics)
+      const results = await Promise.all(symbols.map(async symbol => {
+        const response = await fetch(`${this.baseUrl}/api/stock?query=${encodeURIComponent(symbol)}`)
+        if (!response.ok) throw new Error(`股票数据查询失败: ${response.statusText}`)
+        return await response.json()
+      }))
+      return { symbols, metrics, results }
     } catch (error) {
       throw new Error(`市场数据获取失败: ${error instanceof Error ? error.message : '未知错误'}`)
     }
@@ -214,7 +233,10 @@ export class AmcEvaluationClient {
    */
   async searchLegalCases(query: string, limit = 10) {
     try {
-      return await this.externalDataClient.searchLegalCases(query, limit)
+      const response = await fetch(`${this.baseUrl}/api/knowledge?category=cases&q=${encodeURIComponent(query)}`)
+      if (!response.ok) throw new Error(`法律案例搜索失败: ${response.statusText}`)
+      const results = await response.json()
+      return { query, limit, results: Array.isArray(results) ? results.slice(0, limit) : [] }
     } catch (error) {
       throw new Error(`法律案例搜索失败: ${error instanceof Error ? error.message : '未知错误'}`)
     }
@@ -225,7 +247,10 @@ export class AmcEvaluationClient {
    */
   async getIndustryReports(industry: string, reportType?: string) {
     try {
-      return await this.externalDataClient.getIndustryReports(industry, reportType)
+      const response = await fetch(`${this.baseUrl}/api/knowledge?category=industry&q=${encodeURIComponent(industry)}`)
+      if (!response.ok) throw new Error(`行业报告获取失败: ${response.statusText}`)
+      const results = await response.json()
+      return { industry, reportType, results }
     } catch (error) {
       throw new Error(`行业报告获取失败: ${error instanceof Error ? error.message : '未知错误'}`)
     }
@@ -235,7 +260,16 @@ export class AmcEvaluationClient {
    * 获取知识库列表
    */
   listKnowledgeBases() {
-    return this.knowledgeBaseClient.listKnowledgeBases()
+    return [
+      { id: 'policies', name: '政策法规库', categories: ['政策法规'] },
+      { id: 'legal', name: '法律知识库', categories: ['法律审查'] },
+      { id: 'market', name: '市场数据库', categories: ['市场行情'] },
+      { id: 'cases', name: '案例数据库', categories: ['处置案例'] },
+      { id: 'methodology', name: '评估方法库', categories: ['估值方法'] },
+      { id: 'internal_policies', name: '内规制度库', categories: ['内部制度'] },
+      { id: 'industry', name: '行业知识库', categories: ['行业研究'] },
+      { id: 'feedback', name: '反馈知识库', categories: ['报告反馈'] },
+    ]
   }
 
   /**

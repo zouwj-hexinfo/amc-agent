@@ -92,16 +92,5 @@ export {
 export type {
   StartAmcEvaluationRequest,
   AmcEvaluationOptions,
-} from './amc-client'
-
-// AMC Knowledge Base
-export {
-  AmcKnowledgeBaseClient,
-  AmcExternalDataClient,
-} from './amc-knowledge-base'
-
-export type {
-  KnowledgeEntry,
   KnowledgeBaseQuery,
-  KnowledgeBaseResult,
-} from './amc-knowledge-base'
+} from './amc-client'

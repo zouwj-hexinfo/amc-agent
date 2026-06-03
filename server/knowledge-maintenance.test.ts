@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import * as XLSX from 'xlsx';
-import type { KnowledgeAttachment, KnowledgeWriteSuggestionReview, MarketObject } from '../src/types';
+import type { KnowledgeAttachment, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
 import { mergeHermesKnowledgeAttachmentPreview, parseKnowledgeAttachmentFile, previewKnowledgeAttachmentFiles } from './knowledge-attachment-parser';
 
 process.env.XFAS_ANALYSIS_DB_PATH = ':memory:';
@@ -41,6 +41,58 @@ describe('knowledge item maintenance store helpers', () => {
     expect(store.getKnowledgeItem(item.id)?.attachments).toHaveLength(0);
     expect(store.deleteKnowledgeItem(item.id)).toBe(true);
     expect(store.getKnowledgeItem(item.id)).toBeNull();
+  });
+});
+
+describe('project file and report revision store helpers', () => {
+  test('persists parsed project files and report revisions', () => {
+    const project = store.upsertProject({
+      id: 'proj-test-files',
+      name: '测试文件项目',
+      customerName: '测试客户',
+      projectType: 'NPA_ACQUISITION',
+      debtorName: '测试债务人',
+      totalDebt: 1000,
+      collateralType: '抵押物',
+      collateralEstValue: 800,
+      status: 'Draft',
+      description: '测试',
+      createdAt: '2026-06-02T00:00:00.000Z',
+      updatedAt: '2026-06-02T00:00:00.000Z',
+      files: [],
+      evaluations: {},
+    });
+
+    const file: ProjectFile = {
+      id: 'file-test-parsed',
+      name: '尽调.txt',
+      size: 12,
+      type: 'initial',
+      uploadedAt: '2026-06-02T00:00:00.000Z',
+      contentSnippet: '真实解析文本',
+      mimeType: 'text/plain',
+      parseStatus: 'parsed',
+      parsedText: '真实解析文本全文',
+    };
+    store.upsertProjectFile(project.id, file);
+    expect(store.listProjectFiles(project.id)[0].parsedText).toContain('全文');
+    expect(store.deleteProjectFile(project.id, file.id)).toBe(true);
+
+    const revision: ReportRevision = {
+      id: 'rev-test-maintenance',
+      projectId: project.id,
+      recordId: 'eval-test',
+      originalText: '原文',
+      tunedText: '修订后',
+      instruction: '优化',
+      createdAt: '2026-06-02T00:00:00.000Z',
+      category: 'orchestrator',
+      originalContentSnapshot: '原始报告',
+    };
+    store.upsertReportRevision(revision);
+    expect(store.listReportRevisions({ projectId: project.id })).toHaveLength(1);
+    expect(store.deleteReportRevision(revision.id)).toBe(true);
+    expect(store.listReportRevisions({ projectId: project.id })).toHaveLength(0);
   });
 });
 

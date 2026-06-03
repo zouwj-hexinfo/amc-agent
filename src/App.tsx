@@ -11,7 +11,7 @@ import {
 import { 
   AMCProject, ProjectType, AgentType, AgentConfig, 
   EvaluationRecord, KnowledgeItem, QccResult, StockResult, ProjectFile,
-  ExecutionEvent, ExecutionStep, CommunicationBubble, KnowledgeWriteSuggestionReview
+  ExecutionEvent, ExecutionStep, CommunicationBubble, KnowledgeWriteSuggestionReview, ReportRevision
 } from "./types";
 
 import AgentSettings from "./components/AgentSettings";
@@ -726,29 +726,7 @@ export default function App() {
   const [confirmUndoId, setConfirmUndoId] = React.useState<string | null>(null);
 
   // Word-style persistent revision history
-  const [revisions, setRevisions] = React.useState<Array<{
-    id: string;
-    projectId: string;
-    recordId: string;
-    originalText: string;
-    tunedText: string;
-    instruction: string;
-    createdAt: string;
-    category: string;
-  }>>(() => {
-    try {
-      const stored = localStorage.getItem("amc_revision_history_v2");
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  React.useEffect(() => {
-    try {
-      localStorage.setItem("amc_revision_history_v2", JSON.stringify(revisions));
-    } catch {}
-  }, [revisions]);
+  const [revisions, setRevisions] = React.useState<ReportRevision[]>([]);
 
   // Proactive sync effect: Reset index and select active report categories automatically when projects or selections change
   React.useEffect(() => {
@@ -834,7 +812,7 @@ export default function App() {
   const [newProjBusinessFields, setNewProjBusinessFields] = React.useState<Record<string, any>>({});
 
   // Initial files during creation
-  const [initialFiles, setInitialFiles] = React.useState<{ name: string; type: ProjectFile['type']; contentSnippet: string; size: number }[]>([]);
+  const [initialFiles, setInitialFiles] = React.useState<{ file: File; name: string; type: ProjectFile['type']; contentSnippet: string; size: number }[]>([]);
   const [tempFileName, setTempFileName] = React.useState("");
   const [tempFileType, setTempFileType] = React.useState<ProjectFile['type']>("DD_Report");
   const [tempFileSnippet, setTempFileSnippet] = React.useState("");
@@ -861,6 +839,12 @@ export default function App() {
       if (suggestionRes.ok) {
         const suggestionData: KnowledgeWriteSuggestionReview[] = await suggestionRes.json();
         setKnowledgeSuggestions(suggestionData);
+      }
+
+      const revisionRes = await fetch("/api/revisions");
+      if (revisionRes.ok) {
+        const revisionData: ReportRevision[] = await revisionRes.json();
+        setRevisions(revisionData);
       }
 
       const analysisRes = await fetch("/api/analysis/recent?limit=20");
@@ -900,6 +884,18 @@ export default function App() {
     fetchAllData();
   }, []);
 
+  const uploadProjectFile = async (projectId: string, fileType: string, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("type", fileType);
+    const res = await fetch(`/api/projects/${projectId}/files`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "文件上传解析失败");
+    return await res.json() as ProjectFile;
+  };
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjName || !newProjCustomer) return;
@@ -913,17 +909,19 @@ export default function App() {
           projectType: newProjType,
           description: newProjDesc,
           businessFields: newProjBusinessFields,
-          files: initialFiles.map((f, idx) => ({
-            id: `file-init-${Date.now()}-${idx}`,
-            name: f.name,
-            size: f.size,
-            type: f.type,
-            contentSnippet: f.contentSnippet || "上传立项附带佐证材料说明"
-          }))
         })
       });
       const created: AMCProject = await res.json();
-      setProjects(prev => [created, ...prev]);
+      const uploadedFiles: ProjectFile[] = [];
+      for (const item of initialFiles) {
+        uploadedFiles.push(await uploadProjectFile(created.id, item.type, item.file));
+      }
+      const hydratedProject: AMCProject = {
+        ...created,
+        files: [...(created.files || []), ...uploadedFiles],
+        status: uploadedFiles.length && created.status === 'Draft' ? 'DataCollected' : created.status,
+      };
+      setProjects(prev => [hydratedProject, ...prev]);
       setSelectedProjectId(created.id);
       setCurrentMode('work');
       setIsCreatingProject(false);
@@ -936,8 +934,10 @@ export default function App() {
       setInitialFiles([]);
       setTempFileName("");
       setTempFileSnippet("");
+      if (uploadedFiles.length) addToast(`项目已创建，${uploadedFiles.length} 个初始材料已上传并解析。`, "success");
     } catch (err) {
       console.error(err);
+      addToast("项目创建或初始材料上传失败，请稍后重试。", "error");
     }
   };
 
@@ -956,45 +956,20 @@ export default function App() {
     if (!currentProject) return;
 
     try {
-      const reader = new FileReader();
-      const isText = file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.json') || file.name.endsWith('.csv');
-      
-      const uploadToServer = async (snippetText: string) => {
-        const res = await fetch(`/api/projects/${currentProject.id}/files`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: file.name,
-            size: file.size,
-            type: subfolderId,
-            contentSnippet: snippetText
-          })
-        });
-        const addedFile: ProjectFile = await res.json();
+      const addedFile = await uploadProjectFile(currentProject.id, subfolderId, file);
 
-        setProjects(prev => prev.map(p => {
-          if (p.id === currentProject.id) {
-            const files = [...p.files, addedFile];
-            const nextStatus = p.status === 'Draft' ? 'DataCollected' : p.status;
-            return { ...p, files, status: nextStatus };
-          }
-          return p;
-        }));
-      };
-
-      if (isText) {
-        reader.onload = async (evt) => {
-          const snippetText = typeof evt.target?.result === 'string'
-            ? evt.target.result.slice(0, 1000)
-            : `该文件为 [${file.name}] 的内容副本`;
-          await uploadToServer(snippetText);
-        };
-        reader.readAsText(file);
-      } else {
-        await uploadToServer(`项目资料附件[${file.name}]：通过OCR解析入档。该非结构化文件常态化索引中。`);
-      }
+      setProjects(prev => prev.map(p => {
+        if (p.id === currentProject.id) {
+          const files = [...p.files, addedFile];
+          const nextStatus = p.status === 'Draft' ? 'DataCollected' : p.status;
+          return { ...p, files, status: nextStatus };
+        }
+        return p;
+      }));
+      addToast(addedFile.parseStatus === "parsed" ? "文件已上传并完成文本解析。" : `文件已上传，解析失败：${addedFile.parseError || "暂不支持该格式"}`, addedFile.parseStatus === "parsed" ? "success" : "error");
     } catch (err) {
       console.error("文件上传失败:", err);
+      addToast("文件上传失败，请检查格式或稍后重试。", "error");
     }
   };
 
@@ -1428,19 +1403,9 @@ ${selectedTextStr}
           return p;
         }));
 
-        // Append a new revision record to our persistent list
-        const newRevision = {
-          id: `rev-${Date.now()}`,
-          projectId: currentProject.id,
-          recordId: activeRecord.id,
-          originalText: selectedParagraphs.join("\n"),
-          tunedText: data.tunedText || "已完成智能修订",
-          instruction: tuningInstruction,
-          createdAt: new Date().toISOString(),
-          category: selectedReportKey,
-          originalContentSnapshot: activeRecord.content
-        };
-        setRevisions(prev => [newRevision, ...prev]);
+        if (data.revision) {
+          setRevisions(prev => [data.revision, ...prev.filter(item => item.id !== data.revision.id)]);
+        }
 
         // Reset inputs and modal
         setSelectedParagraphs([]);
@@ -1470,6 +1435,7 @@ ${selectedTextStr}
       // Robust lookup: find the exact record this revision was created for
       const activeRecord = activeList.find(rec => rec.id === item.recordId) as EvaluationRecord | undefined;
       if (!activeRecord) {
+        await fetch(`/api/revisions/${encodeURIComponent(revId)}`, { method: "DELETE" }).catch(() => null);
         setRevisions(prev => prev.filter(r => r.id !== revId));
         addToast("由于在当前报告类别中找不到对应的原稿记录，已直接删除该项修订记录。", "success");
         return;
@@ -1608,6 +1574,7 @@ ${selectedTextStr}
           return p;
         }));
 
+        await fetch(`/api/revisions/${encodeURIComponent(revId)}`, { method: "DELETE" }).catch(() => null);
         setRevisions(prev => prev.filter(r => r.id !== revId));
         addToast("该项历史修订已彻底撤销，正文已恢复为修改前原文，右侧卡片已移除。", "success");
       } else {
@@ -2916,30 +2883,13 @@ ${selectedTextStr}
                             fileType = 'Ownership';
                           }
 
-                          const reader = new FileReader();
-                          reader.onload = (evt) => {
-                            const snippet = typeof evt.target?.result === 'string' 
-                              ? evt.target.result.slice(0, 1000) 
-                              : `该资产文件为提请评估时初始关联的项目必要佐证材料: ${f.name}`;
-                            setInitialFiles(prev => [...prev, {
-                              name: f.name,
-                              type: fileType,
-                              size: f.size,
-                              contentSnippet: snippet
-                            }]);
-                          };
-                          if (f.type.startsWith('text/') || lowerName.endsWith('.txt') || lowerName.endsWith('.json') || lowerName.endsWith('.csv')) {
-                            reader.readAsText(f);
-                          } else {
-                            setTimeout(() => {
-                              setInitialFiles(prev => [...prev, {
-                                name: f.name,
-                                type: fileType,
-                                size: f.size,
-                                contentSnippet: `二进制项目文件[${f.name}]首部指纹：通过OCR及格式解析验证。此文件常态化解译中。`
-                              }]);
-                            }, 50);
-                          }
+                          setInitialFiles(prev => [...prev, {
+                            file: f,
+                            name: f.name,
+                            type: fileType,
+                            size: f.size,
+                            contentSnippet: "待创建项目后由后端解析入库"
+                          }]);
                         });
                         e.target.value = '';
                       }}
