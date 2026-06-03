@@ -969,7 +969,13 @@ export default function App() {
       addToast(addedFile.parseStatus === "parsed" ? "文件已上传并完成文本解析。" : `文件已上传，解析失败：${addedFile.parseError || "暂不支持该格式"}`, addedFile.parseStatus === "parsed" ? "success" : "error");
     } catch (err) {
       console.error("文件上传失败:", err);
-      addToast("文件上传失败，请检查格式或稍后重试。", "error");
+      const message = err instanceof Error ? err.message : "请检查格式或稍后重试";
+      addToast(
+        /exceeds \d+ byte limit/i.test(message)
+          ? `文件超过项目资料上传大小限制：${message}。可通过 PROJECT_FILE_MAX_BYTES 调整。`
+          : `文件上传失败：${message}`,
+        "error",
+      );
     }
   };
 
@@ -2362,6 +2368,22 @@ ${selectedTextStr}
           currentTheme={currentTheme}
         />
       )}
+      <input
+        ref={subfolderFileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={async (event: React.ChangeEvent<HTMLInputElement>) => {
+          const files = Array.from(event.currentTarget.files || []) as File[];
+          const targetFolder = targetSubfolderIdForUpload;
+          event.currentTarget.value = "";
+          if (!targetFolder || files.length === 0) return;
+          for (const file of files) {
+            await handleUploadFileToSubfolder(targetFolder, file);
+          }
+          setTargetSubfolderIdForUpload(null);
+        }}
+      />
 
       {/* Drawer 2: Agent Steppers & Real-time Execution progress */}
       {currentProject && (

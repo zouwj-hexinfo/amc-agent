@@ -1,5 +1,6 @@
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
+import { createRequire } from 'node:module';
 import type { KnowledgeAttachmentPreview, KnowledgeItem } from '../src/types';
 
 export type ParsedKnowledgeAttachment = {
@@ -10,20 +11,32 @@ export type ParsedKnowledgeAttachment = {
 
 const textExtensions = new Set(['txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log']);
 const maxTextLength = 200_000;
+const require = createRequire(import.meta.url);
 
 export async function parseKnowledgeAttachmentFile(file: File): Promise<ParsedKnowledgeAttachment> {
+  const startedAt = Date.now();
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  const mimeType = file.type.toLowerCase();
+  logAttachmentParseDebug('start', {
+    fileName: file.name || '未命名附件',
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    extension,
+  });
   try {
     const bytes = Buffer.from(await file.arrayBuffer());
-    const extension = file.name.split('.').pop()?.toLowerCase() || '';
-    const mimeType = file.type.toLowerCase();
 
     if (textExtensions.has(extension) || mimeType.startsWith('text/') || mimeType.includes('json') || mimeType.includes('csv')) {
-      return parsed(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
+      const result = parsed(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
+      logAttachmentParseResult(file, 'text', result, startedAt);
+      return result;
     }
 
     if (extension === 'docx' || mimeType.includes('wordprocessingml.document')) {
       const result = await mammoth.extractRawText({ buffer: bytes });
-      return parsed(result.value);
+      const parsedResult = parsed(result.value);
+      logAttachmentParseResult(file, 'docx', parsedResult, startedAt);
+      return parsedResult;
     }
 
     if (extension === 'xlsx' || extension === 'xls' || mimeType.includes('spreadsheetml') || mimeType.includes('excel')) {
@@ -32,20 +45,61 @@ export async function parseKnowledgeAttachmentFile(file: File): Promise<ParsedKn
         const sheet = workbook.Sheets[sheetName];
         return [`# ${sheetName}`, XLSX.utils.sheet_to_csv(sheet)].join('\n');
       }).join('\n\n');
-      return parsed(text);
+      const parsedResult = parsed(text);
+      logAttachmentParseResult(file, 'spreadsheet', parsedResult, startedAt, {
+        sheetCount: workbook.SheetNames.length,
+        sheetNames: workbook.SheetNames.slice(0, 8),
+      });
+      return parsedResult;
     }
 
     if (extension === 'pdf' || mimeType.includes('pdf')) {
-      const pdfParse = await import('pdf-parse');
-      const parse = (pdfParse.default || pdfParse) as unknown as (input: Buffer) => Promise<{ text?: string }>;
+      const parse = require('pdf-parse/lib/pdf-parse.js') as (input: Buffer) => Promise<{ text?: string }>;
       const result = await parse(bytes);
-      return parsed(result.text || '');
+      const parsedResult = parsed(result.text || '');
+      logAttachmentParseResult(file, 'pdf', parsedResult, startedAt);
+      return parsedResult;
     }
 
-    return failed(`暂不支持的附件格式：${extension || mimeType || 'unknown'}`);
+    const result = failed(`暂不支持的附件格式：${extension || mimeType || 'unknown'}`);
+    logAttachmentParseResult(file, 'unsupported', result, startedAt);
+    return result;
   } catch (error) {
-    return failed(error instanceof Error ? error.message : '附件解析失败');
+    const result = failed(error instanceof Error ? error.message : '附件解析失败');
+    logAttachmentParseResult(file, 'failed', result, startedAt);
+    return result;
   }
+}
+
+function logAttachmentParseResult(
+  file: File,
+  parser: string,
+  result: ParsedKnowledgeAttachment,
+  startedAt: number,
+  extra: Record<string, unknown> = {},
+) {
+  logAttachmentParseDebug('done', {
+    fileName: file.name || '未命名附件',
+    parser,
+    parseStatus: result.parseStatus,
+    parsedTextLength: result.parsedText?.length ?? 0,
+    parsedTextExcerpt: result.parsedText ? excerpt(result.parsedText, attachmentParseDebugFullTextEnabled() ? 1200 : 240) : undefined,
+    parseError: result.parseError,
+    elapsedMs: Date.now() - startedAt,
+    ...extra,
+  });
+}
+
+function logAttachmentParseDebug(stage: string, payload: Record<string, unknown>) {
+  if (process.env.FILE_UPLOAD_DEBUG === '0') return;
+  console.info(`[FileParse:${stage}]`, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    ...payload,
+  }, null, 2));
+}
+
+function attachmentParseDebugFullTextEnabled() {
+  return process.env.FILE_UPLOAD_DEBUG_FULL === '1';
 }
 
 export async function previewKnowledgeAttachmentFiles(files: File[]): Promise<KnowledgeAttachmentPreview> {

@@ -141,7 +141,7 @@ export function FilesDrawer({
                             onClick={(e) => {
                               e.stopPropagation();
                               setTargetSubfolderIdForUpload("initial");
-                              setTimeout(() => subfolderFileInputRef.current?.click(), 30);
+                              requestAnimationFrame(() => subfolderFileInputRef.current?.click());
                             }}
                             className="text-[9.5px] text-indigo-600 hover:text-indigo-800 font-extrabold flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap cursor-pointer"
                           >
@@ -204,7 +204,7 @@ export function FilesDrawer({
                             onClick={(e) => {
                               e.stopPropagation();
                               setTargetSubfolderIdForUpload("supplementary");
-                              setTimeout(() => subfolderFileInputRef.current?.click(), 30);
+                              requestAnimationFrame(() => subfolderFileInputRef.current?.click());
                             }}
                             className="text-[9.5px] text-indigo-600 hover:text-indigo-800 font-extrabold flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap cursor-pointer"
                           >

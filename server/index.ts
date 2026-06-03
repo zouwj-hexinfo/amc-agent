@@ -294,10 +294,22 @@ app.post('/api/projects', async (c) => {
 app.post('/api/projects/:id/files', async (c) => {
   const project = getProject(c.req.param('id'));
   if (!project) return c.json({ error: 'Project not found' }, 404);
+  const uploadId = `project-file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  logFileUploadDebug('project.request', {
+    uploadId,
+    projectId: project.id,
+    contentType: c.req.header('Content-Type') || c.req.header('content-type') || '',
+    existingFileCount: project.files?.length || 0,
+  });
   let newFile: ProjectFile;
   try {
-    newFile = await readProjectFileUpload(c.req);
+    newFile = await readProjectFileUpload(c.req, { uploadId, projectId: project.id });
   } catch (error) {
+    logFileUploadDebug('project.failed', {
+      uploadId,
+      projectId: project.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return c.json({ error: error instanceof Error ? error.message : 'File upload failed' }, 400);
   }
   project.files = [...(project.files || []), newFile];
@@ -305,6 +317,12 @@ app.post('/api/projects/:id/files', async (c) => {
   project.updatedAt = new Date().toISOString();
   upsertProjectFile(project.id, newFile);
   upsertProject(project);
+  logFileUploadDebug('project.stored', {
+    uploadId,
+    projectId: project.id,
+    storedFile: summarizeProjectFileForLog(newFile),
+    nextFileCount: project.files.length,
+  });
   return c.json(newFile, 201);
 });
 
@@ -536,14 +554,40 @@ app.post('/api/knowledge', async (c) => {
 });
 
 app.post('/api/knowledge/attachments/preview', async (c) => {
+  const uploadId = `knowledge-preview-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  logFileUploadDebug('knowledge-preview.request', {
+    uploadId,
+    contentType: c.req.header('Content-Type') || c.req.header('content-type') || '',
+  });
   const body = await c.req.parseBody({ all: true });
   const rawFiles = body.files ?? body.file;
-  const files = (Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : []).filter((item): item is File => item instanceof File);
-  if (!files.length) return c.json({ error: 'Missing multipart file fields named files or file' }, 400);
+  const files = (Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : []).filter(isUploadedFile);
+  if (!files.length) {
+    logFileUploadDebug('knowledge-preview.failed', { uploadId, error: 'Missing multipart file fields named files or file' });
+    return c.json({ error: 'Missing multipart file fields named files or file' }, 400);
+  }
   const maxSize = Number(process.env.KNOWLEDGE_ATTACHMENT_MAX_BYTES || 10 * 1024 * 1024);
   const oversized = files.find(file => file.size > maxSize);
-  if (oversized) return c.json({ error: `File ${oversized.name} exceeds ${maxSize} byte limit` }, 413);
+  logFileUploadDebug('knowledge-preview.received', {
+    uploadId,
+    maxSize,
+    files: files.map(summarizeUploadedFileForLog),
+  });
+  if (oversized) {
+    logFileUploadDebug('knowledge-preview.failed', {
+      uploadId,
+      error: `File ${oversized.name} exceeds ${maxSize} byte limit`,
+      file: summarizeUploadedFileForLog(oversized),
+    });
+    return c.json({ error: `File ${oversized.name} exceeds ${maxSize} byte limit` }, 413);
+  }
   const fallbackPreview = await previewKnowledgeAttachmentFiles(files);
+  logFileUploadDebug('knowledge-preview.parsed', {
+    uploadId,
+    files: fallbackPreview.files,
+    title: fallbackPreview.title,
+    contentLength: fallbackPreview.content?.length || 0,
+  });
   const sessionId = `knowledge-preview-${Date.now()}`;
   logKnowledgePreviewHermesDebug('fallback-ready', sessionId, {
     files: summarizeKnowledgePreviewFiles(fallbackPreview),
@@ -609,13 +653,43 @@ app.get('/api/knowledge/:id/attachments', (c) => {
 app.post('/api/knowledge/:id/attachments', async (c) => {
   const item = getKnowledgeItem(c.req.param('id'));
   if (!item) return c.json({ error: 'Knowledge item not found' }, 404);
+  const uploadId = `knowledge-attachment-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  logFileUploadDebug('knowledge-attachment.request', {
+    uploadId,
+    knowledgeId: item.id,
+    contentType: c.req.header('Content-Type') || c.req.header('content-type') || '',
+  });
   const body = await c.req.parseBody();
   const file = body.file;
-  if (!(file instanceof File)) return c.json({ error: 'Missing multipart file field named file' }, 400);
+  if (!isUploadedFile(file)) {
+    logFileUploadDebug('knowledge-attachment.failed', { uploadId, knowledgeId: item.id, error: 'Missing multipart file field named file' });
+    return c.json({ error: 'Missing multipart file field named file' }, 400);
+  }
   const maxSize = Number(process.env.KNOWLEDGE_ATTACHMENT_MAX_BYTES || 10 * 1024 * 1024);
-  if (file.size > maxSize) return c.json({ error: `File exceeds ${maxSize} byte limit` }, 413);
+  logFileUploadDebug('knowledge-attachment.received', {
+    uploadId,
+    knowledgeId: item.id,
+    maxSize,
+    file: summarizeUploadedFileForLog(file),
+  });
+  if (file.size > maxSize) {
+    logFileUploadDebug('knowledge-attachment.failed', {
+      uploadId,
+      knowledgeId: item.id,
+      error: `File exceeds ${maxSize} byte limit`,
+      file: summarizeUploadedFileForLog(file),
+    });
+    return c.json({ error: `File exceeds ${maxSize} byte limit` }, 413);
+  }
 
   const parsed = await parseKnowledgeAttachmentFile(file);
+  logFileUploadDebug('knowledge-attachment.parsed', {
+    uploadId,
+    knowledgeId: item.id,
+    parseStatus: parsed.parseStatus,
+    parsedTextLength: parsed.parsedText?.length || 0,
+    parseError: parsed.parseError,
+  });
   const attachment = upsertKnowledgeAttachment({
     id: `katt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     knowledgeId: item.id,
@@ -626,6 +700,13 @@ app.post('/api/knowledge/:id/attachments', async (c) => {
     parsedText: parsed.parsedText,
     parseError: parsed.parseError,
     uploadedAt: new Date().toISOString(),
+  });
+  logFileUploadDebug('knowledge-attachment.stored', {
+    uploadId,
+    knowledgeId: item.id,
+    attachmentId: attachment.id,
+    parseStatus: attachment.parseStatus,
+    parsedTextLength: attachment.parsedText?.length || 0,
   });
   return c.json(attachment, 201);
 });
@@ -794,19 +875,46 @@ function normalizeKnowledgeItem(body: Partial<KnowledgeItem> & { id?: string }):
   };
 }
 
-async function readProjectFileUpload(req: HonoRequest): Promise<ProjectFile> {
+function isUploadedFile(value: unknown): value is File {
+  return Boolean(
+    value
+      && typeof value === 'object'
+      && typeof (value as File).arrayBuffer === 'function'
+      && typeof (value as File).name === 'string'
+      && typeof (value as File).size === 'number',
+  );
+}
+
+async function readProjectFileUpload(req: HonoRequest, context: { uploadId: string; projectId: string }): Promise<ProjectFile> {
   const uploadedAt = new Date().toISOString();
   const contentType = req.header('Content-Type') || req.header('content-type') || '';
   if (contentType.includes('multipart/form-data')) {
     const body = await req.parseBody();
     const rawFile = body.file ?? body.files;
-    const file = (Array.isArray(rawFile) ? rawFile[0] : rawFile) as File | undefined;
-    if (!(file instanceof File)) throw new Error('Missing multipart file field named file');
-    const maxSize = Number(process.env.PROJECT_FILE_MAX_BYTES || process.env.KNOWLEDGE_ATTACHMENT_MAX_BYTES || 10 * 1024 * 1024);
+    const file = Array.isArray(rawFile) ? rawFile[0] : rawFile;
+    if (!isUploadedFile(file)) throw new Error('Missing multipart file field named file');
+    const maxSize = Number(process.env.PROJECT_FILE_MAX_BYTES || 50 * 1024 * 1024);
+    logFileUploadDebug('project.received', {
+      uploadId: context.uploadId,
+      projectId: context.projectId,
+      maxSize,
+      file: summarizeUploadedFileForLog(file),
+      requestedType: String(body.type || 'Other'),
+    });
     if (file.size > maxSize) throw new Error(`File ${file.name} exceeds ${maxSize} byte limit`);
     const type = String(body.type || 'Other');
     const parsed = await parseKnowledgeAttachmentFile(file);
     const parsedText = parsed.parsedText || '';
+    logFileUploadDebug('project.parsed', {
+      uploadId: context.uploadId,
+      projectId: context.projectId,
+      fileName: file.name || '未命名文档',
+      type,
+      parseStatus: parsed.parseStatus,
+      parsedTextLength: parsed.parsedText?.length || 0,
+      parsedTextExcerpt: parsed.parsedText ? excerptForLog(parsed.parsedText, fileUploadDebugFullTextEnabled() ? 1200 : 240) : undefined,
+      parseError: parsed.parseError,
+    });
     return {
       id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: file.name || '未命名文档',
@@ -824,6 +932,14 @@ async function readProjectFileUpload(req: HonoRequest): Promise<ProjectFile> {
   }
 
   const body = await req.json<Partial<ProjectFile>>();
+  logFileUploadDebug('project.legacy-json', {
+    uploadId: context.uploadId,
+    projectId: context.projectId,
+    fileName: body.name || '未命名文档.txt',
+    size: Number(body.size) || 2048,
+    type: body.type || 'Other',
+    contentSnippetLength: body.contentSnippet?.length || 0,
+  });
   return {
     id: body.id || `file-${Date.now()}`,
     name: body.name || '未命名文档.txt',
@@ -835,6 +951,41 @@ async function readProjectFileUpload(req: HonoRequest): Promise<ProjectFile> {
     parseStatus: body.parseStatus,
     parsedText: body.parsedText,
     parseError: body.parseError,
+  };
+}
+
+function logFileUploadDebug(stage: string, payload: Record<string, unknown>) {
+  if (process.env.FILE_UPLOAD_DEBUG === '0') return;
+  console.info(`[FileUpload:${stage}]`, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    ...payload,
+  }, null, 2));
+}
+
+function fileUploadDebugFullTextEnabled() {
+  return process.env.FILE_UPLOAD_DEBUG_FULL === '1';
+}
+
+function summarizeUploadedFileForLog(file: File) {
+  return {
+    fileName: file.name || '未命名文档',
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    extension: file.name?.split('.').pop()?.toLowerCase() || '',
+  };
+}
+
+function summarizeProjectFileForLog(file: ProjectFile) {
+  return {
+    id: file.id,
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    mimeType: file.mimeType,
+    parseStatus: file.parseStatus,
+    parsedTextLength: file.parsedText?.length || 0,
+    contentSnippetLength: file.contentSnippet?.length || 0,
+    parseError: file.parseError,
   };
 }
 
