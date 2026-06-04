@@ -813,6 +813,7 @@ export default function App() {
 
   // Initial files during creation
   const [initialFiles, setInitialFiles] = React.useState<{ file: File; name: string; type: ProjectFile['type']; contentSnippet: string; size: number }[]>([]);
+  const [isInitialFileDragActive, setIsInitialFileDragActive] = React.useState(false);
   const [tempFileName, setTempFileName] = React.useState("");
   const [tempFileType, setTempFileType] = React.useState<ProjectFile['type']>("DD_Report");
   const [tempFileSnippet, setTempFileSnippet] = React.useState("");
@@ -820,6 +821,31 @@ export default function App() {
   const [targetSubfolderIdForUpload, setTargetSubfolderIdForUpload] = React.useState<string | null>(null);
   const [previewFile, setPreviewFile] = React.useState<ProjectFile | null>(null);
   const subfolderFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const inferInitialProjectFileType = (file: File): ProjectFile['type'] => {
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.includes('财务') || lowerName.includes('账单') || lowerName.includes('审计') || lowerName.includes('financial') || lowerName.includes('money')) {
+      return 'Financial';
+    }
+    if (lowerName.includes('物权') || lowerName.includes('查封') || lowerName.includes('裁决') || lowerName.includes('权属') || lowerName.includes('ownership') || lowerName.includes('law')) {
+      return 'Ownership';
+    }
+    return 'DD_Report';
+  };
+
+  const appendInitialProjectFiles = (files: File[]) => {
+    if (!files.length) return;
+    setInitialFiles(prev => [
+      ...prev,
+      ...files.map(file => ({
+        file,
+        name: file.name,
+        type: inferInitialProjectFileType(file),
+        size: file.size,
+        contentSnippet: "待创建项目后由后端解析入库",
+      })),
+    ]);
+  };
 
   // Load baseline on startup
   const fetchAllData = async () => {
@@ -2893,38 +2919,49 @@ ${selectedTextStr}
                       id="drawer-initial-files-upload-input"
                       multiple
                       className="hidden"
-                      onChange={(e) => {
-                        const files = e.target.files;
-                        if (!files) return;
-                        Array.from(files).forEach((f: any) => {
-                          let fileType: ProjectFile['type'] = 'DD_Report';
-                          const lowerName = f.name.toLowerCase();
-                          if (lowerName.includes('财务') || lowerName.includes('账单') || lowerName.includes('审计') || lowerName.includes('financial') || lowerName.includes('money')) {
-                            fileType = 'Financial';
-                          } else if (lowerName.includes('物权') || lowerName.includes('查封') || lowerName.includes('裁决') || lowerName.includes('权属') || lowerName.includes('ownership') || lowerName.includes('law')) {
-                            fileType = 'Ownership';
-                          }
+	                      onChange={(e) => {
+	                        const files = e.target.files;
+	                        if (!files) return;
+	                        appendInitialProjectFiles(Array.from(files));
+	                        e.target.value = '';
+	                      }}
+	                    />
 
-                          setInitialFiles(prev => [...prev, {
-                            file: f,
-                            name: f.name,
-                            type: fileType,
-                            size: f.size,
-                            contentSnippet: "待创建项目后由后端解析入库"
-                          }]);
-                        });
-                        e.target.value = '';
-                      }}
-                    />
-
-                    <label
-                      htmlFor="drawer-initial-files-upload-input"
-                      className={`flex flex-col items-center justify-center border border-dashed border-slate-250 rounded-xl p-5 bg-white cursor-pointer hover:bg-slate-50/50 transition-all text-center select-none hover:border-${activeColorBrand}-500`}
-                    >
-                      <Upload className="w-5 h-5 text-slate-400 mb-1" />
-                      <span className="text-[11px] font-bold text-slate-700">点击或将文件拖至此处上传</span>
-                      <span className="text-[9px] text-slate-400 mt-0.5">支持财务、物权、尽调及合同资信档案</span>
-                    </label>
+	                    <label
+	                      htmlFor="drawer-initial-files-upload-input"
+	                      onDragEnter={(e) => {
+	                        e.preventDefault();
+	                        e.stopPropagation();
+	                        setIsInitialFileDragActive(true);
+	                      }}
+	                      onDragOver={(e) => {
+	                        e.preventDefault();
+	                        e.stopPropagation();
+	                        e.dataTransfer.dropEffect = 'copy';
+	                        setIsInitialFileDragActive(true);
+	                      }}
+	                      onDragLeave={(e) => {
+	                        e.preventDefault();
+	                        e.stopPropagation();
+	                        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+	                        setIsInitialFileDragActive(false);
+	                      }}
+	                      onDrop={(e) => {
+	                        e.preventDefault();
+	                        e.stopPropagation();
+	                        setIsInitialFileDragActive(false);
+	                        appendInitialProjectFiles(Array.from(e.dataTransfer.files || []));
+	                      }}
+	                      className={`flex flex-col items-center justify-center border border-dashed rounded-xl p-5 bg-white cursor-pointer transition-all text-center select-none ${
+	                        isInitialFileDragActive
+	                          ? `${currentTheme.badge} border-${activeColorBrand}-500 ring-2 ring-${activeColorBrand}-500/15`
+	                          : `border-slate-250 hover:bg-slate-50/50 hover:border-${activeColorBrand}-500`
+	                      }`}
+	                    >
+	                      <Upload className={`w-5 h-5 mb-1 ${isInitialFileDragActive ? `text-${activeColorBrand}-600` : 'text-slate-400'}`} />
+	                      <span className="text-[11px] font-bold text-slate-700">{isInitialFileDragActive ? '松开即可添加文件' : '点击或将文件拖至此处上传'}</span>
+	                      <span className="text-[9px] text-slate-400 mt-0.5">支持财务、物权、尽调及合同资信档案</span>
+	                    </label>
 
                     {initialFiles.length > 0 && (
                       <div className="space-y-1.5 border-t border-slate-150 pt-2 shadow-inner">
