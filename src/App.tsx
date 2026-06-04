@@ -9,9 +9,10 @@ import {
 } from "lucide-react";
 
 import { 
-  AMCProject, ProjectType, AgentType, AgentConfig, 
+  AMCProject, ProjectType, AgentType, 
   EvaluationRecord, KnowledgeItem, QccResult, StockResult, ProjectFile,
-  ExecutionEvent, ExecutionStep, CommunicationBubble, KnowledgeWriteSuggestionReview, ReportRevision
+  ExecutionEvent, ExecutionStep, CommunicationBubble, KnowledgeWriteSuggestionReview, ReportRevision,
+  AgentConfigBundle, AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem
 } from "./types";
 
 import AgentSettings from "./components/AgentSettings";
@@ -22,44 +23,6 @@ import ReportViewer from "./components/ReportViewer";
 import { FilesDrawer, ExecutionDrawer } from "./components/LeftDrawers";
 import DocumentPreviewer from "./components/DocumentPreviewer";
 import SystemHomePage from "./components/SystemHomePage";
-
-const DEFAULT_AGENTS: AgentConfig[] = [
-  {
-    type: "law_review",
-    name: "法务合规专家",
-    role: "审核合规合法性、优先权及债务隔离红线",
-    temperature: 0.15,
-    systemPrompt: `你是资产管理公司（AMC）的法律审查首席顾问。你最看重抵押权的有效对抗和首查封绝对顺位优先。请深度聚焦评估项目的合规瑕疵，援引《民法典》和最高院金融解释。`,
-    skills: [
-      { id: "law_顺位核对", name: "查封重叠顺位核验", description: "判断首家查封法院，对轮候冻结的追收几率打折", prompt: "检查轮候封限", selected: true },
-      { id: "law_施工价款", name: "在建工程施工款最优先权审校", description: "审计拖欠承建商总价款情况", prompt: "工程款清欠核验", selected: true },
-      { id: "law_划拨出让", name: "划拨平移出让合规路径评估", description: "对国有划拨工业用地合法出让过户审查", prompt: "划拨土地合规合规路径", selected: false }
-    ]
-  },
-  {
-    type: "evaluation",
-    name: "项目评估专家",
-    role: "抵质押物折扣变现重估、还原率及LTV测算",
-    temperature: 0.20,
-    systemPrompt: `你是高级资产评估师。你偏爱客观重估、市场比对、租金收益率还原。重估写字楼商铺底商需保守对折清偿，必须给到最终变现率 and 折扣评估预测。`,
-    skills: [
-      { id: "eval_市场可比", name: "大宗物业周边可比报价核校", description: "核对最近6个月三四线或远郊大宗产权变现均价", prompt: "周边可比资产行情评估", selected: true },
-      { id: "eval_折扣评估", name: "清算折扣率保守加权测算", description: "测算空置周转率及最少18个月的持利折现", prompt: "资产快速变现折扣率", selected: true },
-      { id: "eval_收益覆盖", name: "租金还原因子 (r系数) 修正", description: "调增经营物业折现还原风险贴水区间", prompt: "折现率与还原率核算", selected: false }
-    ]
-  },
-  {
-    type: "risk_review",
-    name: "风险评估专家",
-    role: "统筹全局主体违约概率、准入红线合规审计",
-    temperature: 0.10,
-    systemPrompt: `你是首席风控官。你以严控项目信用敞口、不盲目重整、抵当覆盖率达标为工作前提。`,
-    skills: [
-      { id: "risk_主体信用", name: "控股股东关联高管诉讼穿透", description: "计算实际控制主体无限反担保信用缺失折扣", prompt: "实控主体被执行穿透", selected: true },
-      { id: "risk_准入极值", name: "风险敞口极值与限额符合性判定", description: "对LTV以及内部风控制度准入黑天名单阈值做符合性报告", prompt: "准入门槛制度硬隔离审核", selected: true }
-    ]
-  }
-];
 
 export const THEME_COLOR_MAPS: Record<string, { bg: string, text: string, border: string, badge: string, iconBg: string, activeTab: string, primaryBtn: string, linkText: string, inputRing: string, accentBg: string }> = {
   indigo: { bg: "bg-indigo-50/40", text: "text-indigo-700", border: "border-indigo-100", badge: "bg-indigo-50 text-indigo-700 border-indigo-200", iconBg: "bg-indigo-500/10 text-indigo-600", activeTab: "bg-indigo-50 border border-indigo-200/80 text-indigo-700 font-bold shadow-3xs", primaryBtn: "bg-indigo-600 hover:bg-indigo-750 active:bg-indigo-850 text-white shadow-xs", linkText: "text-indigo-600 hover:text-indigo-800", inputRing: "focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25", accentBg: "bg-indigo-600 text-white" },
@@ -279,6 +242,20 @@ export const PROJECT_TYPES_CONFIG: Record<string, {
     ]
   }
 };
+
+function buildProjectTypesConfig(domains: AgentDomain[]) {
+  if (!domains.length) return PROJECT_TYPES_CONFIG;
+  return domains.reduce((acc, domain) => {
+    const fallback = PROJECT_TYPES_CONFIG[domain.code] || PROJECT_TYPES_CONFIG.NPA_ACQUISITION;
+    acc[domain.code] = {
+      ...fallback,
+      label: domain.status === 'inactive' ? `${domain.label}（已停用）` : domain.label,
+      themeColor: domain.themeColor || fallback.themeColor,
+      fields: domain.fields?.length ? domain.fields : fallback.fields,
+    };
+    return acc;
+  }, {} as typeof PROJECT_TYPES_CONFIG);
+}
 
 export interface FolderCategory {
   id: string;
@@ -547,7 +524,12 @@ export default function App() {
   const [knowledgeSuggestions, setKnowledgeSuggestions] = React.useState<KnowledgeWriteSuggestionReview[]>([]);
   
   // Agent prompt and settings configurations
-  const [agentConfigs, setAgentConfigs] = React.useState<AgentConfig[]>(DEFAULT_AGENTS);
+  const [agentConfigBundle, setAgentConfigBundle] = React.useState<AgentConfigBundle>({
+    domains: [],
+    roles: [],
+    workGroups: [],
+    workItems: [],
+  });
 
   // Tab switching state
   const [activeTab, setActiveTab] = React.useState<'workspace' | 'tools' | 'knowledge' | 'agents'>('workspace');
@@ -562,6 +544,8 @@ export default function App() {
   ]);
   const [orchestratorMode, setOrchestratorMode] = React.useState<'single' | 'chain' | 'discuss' | 'master-slave'>('discuss');
   const [selectedAgent, setSelectedAgent] = React.useState<AgentType>('orchestrator');
+  const [selectedAgentRoleId, setSelectedAgentRoleId] = React.useState<string>("");
+  const [selectedAgentWorkItemId, setSelectedAgentWorkItemId] = React.useState<string>("");
 
   // Simulated Document attachment upload fields
   const [newFileName, setNewFileName] = React.useState("");
@@ -586,11 +570,46 @@ export default function App() {
   // Active workspace project
   const currentProject = projects.find(p => p.id === selectedProjectId) || projects[0];
 
+  const projectTypesConfig = React.useMemo(() => buildProjectTypesConfig(agentConfigBundle.domains), [agentConfigBundle.domains]);
+  const activeProjectDomains = React.useMemo(() => {
+    const active = agentConfigBundle.domains.filter(domain => domain.status !== 'inactive');
+    return active.length ? active : Object.entries(PROJECT_TYPES_CONFIG).map(([code, cfg]) => ({
+      id: `fallback-${code}`,
+      code,
+      label: cfg.label,
+      themeColor: cfg.themeColor,
+      fields: cfg.fields,
+      status: 'active' as const,
+      createdAt: '',
+      updatedAt: '',
+    }));
+  }, [agentConfigBundle.domains]);
   const currentProjType = currentProject?.projectType || 'NPA_ACQUISITION';
-  const currentConfig = PROJECT_TYPES_CONFIG[currentProjType] || PROJECT_TYPES_CONFIG.NPA_ACQUISITION;
+  const currentConfig = projectTypesConfig[currentProjType] || PROJECT_TYPES_CONFIG.NPA_ACQUISITION;
   const activeColorBrand = overrideThemeBrand || currentConfig.themeColor || 'indigo';
   const currentTheme = THEME_COLOR_MAPS[activeColorBrand] || THEME_COLOR_MAPS.indigo;
   const brandColors = BRAND_THEME_DETAILS[activeColorBrand] || BRAND_THEME_DETAILS.indigo;
+  const currentAgentDomain = agentConfigBundle.domains.find(domain => domain.code === currentProjType) || agentConfigBundle.domains[0];
+  const currentAgentRoles = agentConfigBundle.roles.filter(role => role.domainId === currentAgentDomain?.id && role.status !== 'inactive');
+  const currentSelectedRole = currentAgentRoles.find(role => role.id === selectedAgentRoleId) || currentAgentRoles[0];
+  const currentRoleWorkGroups = agentConfigBundle.workGroups.filter(group => group.roleId === currentSelectedRole?.id && group.status !== 'inactive');
+  const currentRoleWorkItems = agentConfigBundle.workItems.filter(item => item.roleId === currentSelectedRole?.id && item.status !== 'inactive');
+  const currentSelectedWorkItem = currentRoleWorkItems.find(item => item.id === selectedAgentWorkItemId) || currentRoleWorkItems[0];
+
+  React.useEffect(() => {
+    if (!currentAgentRoles.length) return;
+    const role = currentAgentRoles.find(item => item.id === selectedAgentRoleId) || currentAgentRoles[0];
+    if (role.id !== selectedAgentRoleId) {
+      setSelectedAgentRoleId(role.id);
+      setSelectedAgent(role.agentType);
+    }
+  }, [currentAgentDomain?.id, currentAgentRoles, selectedAgentRoleId]);
+
+  React.useEffect(() => {
+    if (!currentSelectedRole) return;
+    const workItem = currentRoleWorkItems.find(item => item.id === selectedAgentWorkItemId) || currentRoleWorkItems[0];
+    setSelectedAgentWorkItemId(workItem?.id || "");
+  }, [currentSelectedRole?.id, currentRoleWorkItems, selectedAgentWorkItemId]);
 
   const themeActiveTab = 
     activeColorBrand === 'rose' ? "border-rose-600 bg-rose-50/50 text-rose-900 ring-1 ring-rose-500/25" :
@@ -865,6 +884,12 @@ export default function App() {
       if (suggestionRes.ok) {
         const suggestionData: KnowledgeWriteSuggestionReview[] = await suggestionRes.json();
         setKnowledgeSuggestions(suggestionData);
+      }
+
+      const agentConfigRes = await fetch("/api/agent-config");
+      if (agentConfigRes.ok) {
+        const agentConfigData: AgentConfigBundle = await agentConfigRes.json();
+        setAgentConfigBundle(agentConfigData);
       }
 
       const revisionRes = await fetch("/api/revisions");
@@ -1221,17 +1246,14 @@ export default function App() {
     setWorkspaceSubTab('execution');
     setIsLeftExecOpen(true); // Auto open execution logs drawer on left
 
-    const activeConfig = agentConfigs.find(c => c.type === selectedAgent);
-    const selectedSkills = activeConfig 
-      ? activeConfig.skills.filter(s => s.selected).map(s => s.name)
-      : [];
+    const selectedSkills = currentSelectedWorkItem?.definition.skills || [];
 
     const newEventId = `evt-live-${Date.now()}`;
     const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
     let actionLabel = "";
     if (orchestratorMode === 'single') {
-      const name = agentConfigs.find(c => c.type === selectedAgent)?.name || "专家";
+      const name = currentSelectedRole?.name || "专家";
       actionLabel = `[指向指派] 由 ${name} 针对性执行审查并撰写报告`;
     } else if (orchestratorMode === 'chain') {
       actionLabel = `[顺序执行] 启动法务合规、项目评估、风审汇总串行流程`;
@@ -1287,7 +1309,10 @@ export default function App() {
           agentType: selectedAgent,
           selectedSkills,
           orchestratorMode: orchestratorMode,
-          userInstruction: instructionText
+          userInstruction: instructionText,
+          domainId: currentAgentDomain?.id,
+          roleId: currentSelectedRole?.id,
+          workItemId: currentSelectedWorkItem?.id
         })
       });
       const data = await res.json();
@@ -1845,7 +1870,7 @@ ${selectedTextStr}
                 activeColorBrand={activeColorBrand}
                 setIsProjectDrawerOpen={setIsProjectDrawerOpen}
                 setIsCreatingProject={setIsCreatingProject}
-                projectTypesConfig={PROJECT_TYPES_CONFIG}
+                projectTypesConfig={projectTypesConfig}
               />
             )}
 
@@ -1896,10 +1921,10 @@ ${selectedTextStr}
                       <button
                         onClick={() => setIsCollabConsoleOpen(!isCollabConsoleOpen)}
                         className={`text-[10.5px] font-extrabold px-3 py-1 rounded-full border hover:bg-opacity-90 active:scale-98 transition-all flex items-center gap-1.5 shadow-3xs cursor-pointer select-none ${currentTheme.badge}`}
-                      >
-                        {orchestratorMode === 'discuss' ? "🤖 智能规划 (按意图调用)" : 
-                         orchestratorMode === 'single' ? `👤 指定专家 (${DEFAULT_AGENTS.find(a => a.type === selectedAgent)?.name || "法务合规岗"})` :
-                         "⛓️ 顺序执行 (固定流程)"}
+	                      >
+	                        {orchestratorMode === 'discuss' ? "🤖 智能规划 (按意图调用)" : 
+	                         orchestratorMode === 'single' ? `👤 指定专家 (${currentSelectedRole?.name || "法务合规岗"})` :
+	                         "⛓️ 顺序执行 (固定流程)"}
                       </button>
                     </div>
                   </div>
@@ -1940,27 +1965,53 @@ ${selectedTextStr}
 
                       {/* Step 2: Target Agent Choice */}
                       {orchestratorMode === 'single' ? (
-                        <div className="space-y-2 text-left animate-in fade-in duration-150">
-                          <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">② 专家选择</label>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                            {DEFAULT_AGENTS.filter(cfg => cfg.type !== 'orchestrator').map(cfg => {
-                              const isSelected = selectedAgent === cfg.type;
-                              return (
-                                <button
-                                  key={cfg.type}
-                                  onClick={() => setSelectedAgent(cfg.type)}
-                                  className={`p-2 py-2.5 text-xs font-bold rounded-lg border text-center cursor-pointer transition-all ${
-                                    isSelected 
-                                      ? `${currentTheme.accentBg} border-transparent shadow-3xs` 
-                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                                  }`}
-                                >
-                                  <span>{cfg.name}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
+	                        <div className="space-y-2 text-left animate-in fade-in duration-150">
+	                          <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">② 专家选择</label>
+	                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+	                            {currentAgentRoles.map(role => {
+	                              const isSelected = selectedAgentRoleId === role.id;
+	                              return (
+	                                <button
+	                                  key={role.id}
+	                                  onClick={() => {
+	                                    setSelectedAgentRoleId(role.id);
+	                                    setSelectedAgent(role.agentType);
+	                                    const firstWorkItem = agentConfigBundle.workItems.find(item => item.roleId === role.id && item.status !== 'inactive');
+	                                    setSelectedAgentWorkItemId(firstWorkItem?.id || "");
+	                                  }}
+	                                  className={`p-2 py-2.5 text-xs font-bold rounded-lg border text-center cursor-pointer transition-all ${
+	                                    isSelected 
+	                                      ? `${currentTheme.accentBg} border-transparent shadow-3xs` 
+	                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+	                                  }`}
+	                                >
+	                                  <span>{role.name}</span>
+	                                </button>
+	                              );
+	                            })}
+	                          </div>
+	                          <div className="space-y-1.5">
+	                            <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">③ 工作项选择</label>
+	                            <select
+	                              value={currentSelectedWorkItem?.id || ""}
+	                              onChange={(e) => setSelectedAgentWorkItemId(e.target.value)}
+	                              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-slate-700 focus:outline-none"
+	                            >
+	                              {currentRoleWorkGroups.map(group => (
+	                                <optgroup key={group.id} label={group.name}>
+	                                  {currentRoleWorkItems.filter(item => item.groupId === group.id).map(item => (
+	                                    <option key={item.id} value={item.id}>{item.name}</option>
+	                                  ))}
+	                                </optgroup>
+	                              ))}
+	                            </select>
+	                            {currentSelectedWorkItem && (
+	                              <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+	                                {currentSelectedWorkItem.description || "将按该工作项定义、知识资产和成果模板启动 Hermes Agent。"}
+	                              </p>
+	                            )}
+	                          </div>
+	                        </div>
                       ) : (
                         <div className="space-y-2 text-left animate-in fade-in duration-150">
                           <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">② 执行流程</label>
@@ -2307,12 +2358,13 @@ ${selectedTextStr}
                 {/* Container */}
                 <div className="mt-4">
                   {activeTab === 'agents' && (
-                    <AgentSettings
-                      configs={agentConfigs}
-                      onUpdateConfig={setAgentConfigs}
-                      currentTheme={currentTheme}
-                      activeColorBrand={activeColorBrand}
-                    />
+	                    <AgentSettings
+	                      bundle={agentConfigBundle}
+	                      knowledgeItems={kbItems}
+	                      onRefresh={fetchAllData}
+	                      currentTheme={currentTheme}
+	                      activeColorBrand={activeColorBrand}
+	                    />
                   )}
 
                   {activeTab === 'knowledge' && (
@@ -2892,13 +2944,9 @@ ${selectedTextStr}
                       }}
                       className={`w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-1 focus:ring-${activeColorBrand}-500/25 focus:outline-none font-semibold text-slate-700`}
                     >
-                      <option value="NPA_ACQUISITION">对公不良资产收购 (Corporate NPA Acquisition)</option>
-                      <option value="NPA_TRANSFER">对公不良资产转让 (Corporate NPA Transfer)</option>
-                      <option value="DEBT_RESTRUCTURE">债务重组 (Debt Restructuring)</option>
-                      <option value="BANKRUPTCY_REORG">破产重整 (Bankruptcy Reorganization)</option>
-                      <option value="SUBSTANTIVE_REORG">实质性重组 (Substantive Restructuring)</option>
-                      <option value="STANDARDIZED_DEBT">标准化债权投资 (Standardized Debt Investment)</option>
-                      <option value="BATCH_PERSONAL_NPA">批量个人不良资产收购 (Bulk Personal NPA)</option>
+                      {activeProjectDomains.map(domain => (
+                        <option key={domain.id} value={domain.code}>{domain.label}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -3038,7 +3086,7 @@ ${selectedTextStr}
                     const evaluationsList = Object.values(proj.evaluations) as any[];
                     const reportsCount = evaluationsList.reduce((acc: number, curr: any) => acc + curr.length, 0);
 
-                    const projConfig = PROJECT_TYPES_CONFIG[proj.projectType] || PROJECT_TYPES_CONFIG.NPA_ACQUISITION;
+                    const projConfig = projectTypesConfig[proj.projectType] || PROJECT_TYPES_CONFIG.NPA_ACQUISITION;
 
                     return (
                       <div

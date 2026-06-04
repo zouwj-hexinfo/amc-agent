@@ -1,11 +1,4 @@
-export type ProjectType = 
-  | 'NPA_ACQUISITION' 
-  | 'NPA_TRANSFER' 
-  | 'DEBT_RESTRUCTURE' 
-  | 'BANKRUPTCY_REORG' 
-  | 'SUBSTANTIVE_REORG' 
-  | 'STANDARDIZED_DEBT' 
-  | 'BATCH_PERSONAL_NPA';
+export type ProjectType = string;
 
 export interface AMCProject {
   id: string;
@@ -70,6 +63,81 @@ export interface AgentConfig {
   temperature: number;
   systemPrompt: string;
   skills: AgentSkill[];
+}
+
+export type AgentConfigStatus = 'active' | 'inactive';
+
+export interface AgentDomainField {
+  key: string;
+  label: string;
+  placeholder: string;
+  type: 'text' | 'number' | 'date';
+  required?: boolean;
+}
+
+export interface AgentDomain {
+  id: string;
+  code: string;
+  label: string;
+  description?: string;
+  themeColor: string;
+  fields: AgentDomainField[];
+  status: AgentConfigStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentRole {
+  id: string;
+  domainId: string;
+  agentType: AgentType;
+  name: string;
+  role: string;
+  defaultTemperature: number;
+  status: AgentConfigStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentWorkGroup {
+  id: string;
+  domainId: string;
+  roleId: string;
+  name: string;
+  description?: string;
+  status: AgentConfigStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentWorkItemDefinition {
+  workSteps: string[];
+  knowledgeItemIds: string[];
+  outputTemplate: string;
+  systemPrompt: string;
+  userPrompt: string;
+  tools: string[];
+  skills: string[];
+}
+
+export interface AgentWorkItem {
+  id: string;
+  domainId: string;
+  roleId: string;
+  groupId: string;
+  name: string;
+  description?: string;
+  definition: AgentWorkItemDefinition;
+  status: AgentConfigStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentConfigBundle {
+  domains: AgentDomain[];
+  roles: AgentRole[];
+  workGroups: AgentWorkGroup[];
+  workItems: AgentWorkItem[];
 }
 
 export interface EvaluationRecord {

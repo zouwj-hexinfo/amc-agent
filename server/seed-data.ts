@@ -1,4 +1,6 @@
-import type { AMCProject, KnowledgeItem, MarketObject } from '../src/types';
+import type { AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, AMCProject, KnowledgeItem, MarketObject } from '../src/types';
+
+const seedCreatedAt = new Date().toISOString();
 
 export const seedProjects: AMCProject[] = [
   {
@@ -164,6 +166,290 @@ export const seedMarketObjects: MarketObject[] = [
       { id: 'row_2_3', assetCategory: '限制性涉诉在建普通住宅工程', maxLtv: 35, riskBuffer: '需地方党委防烂尾协调函 + AMC派驻共管监督章', approvalAuthority: '总部董事会特别质询委员会', effectiveDate: '2026-03-20' },
     ],
   },
+];
+
+export const seedAgentDomains: AgentDomain[] = [
+  {
+    id: 'domain-npa-acquisition',
+    code: 'NPA_ACQUISITION',
+    label: '对公不良资产收购',
+    description: '对公不良债权收购、尽调、定价、合规审查和投后处置。',
+    themeColor: 'indigo',
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    fields: [
+      { key: 'debtorName', label: '主债务人名称', placeholder: '例如：上海中合实业有限公司', type: 'text', required: true },
+      { key: 'totalDebt', label: '债权本金 (万元)', placeholder: '例如：12500', type: 'number', required: true },
+      { key: 'interestAndPenalty', label: '利息及罚息 (万元)', placeholder: '例如：1250', type: 'number' },
+      { key: 'collateralType', label: '主要抵押标的描述', placeholder: '例如：商业地下建筑及写字楼底商（5500㎡）', type: 'text' },
+      { key: 'collateralEstValue', label: '抵押物预估值 (万元)', placeholder: '例如：9800', type: 'number' },
+      { key: 'guarantorDetails', label: '保证人担保及反担保情况', placeholder: '例如：控股股东提供连带保证担保', type: 'text' },
+    ],
+  },
+  {
+    id: 'domain-npa-transfer',
+    code: 'NPA_TRANSFER',
+    label: '对公不良资产转让',
+    description: '对公不良资产挂牌、转让、交易结构和合规披露。',
+    themeColor: 'purple',
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    fields: [
+      { key: 'transferFloorPrice', label: '挂牌转让底价 (万元)', placeholder: '例如：8000', type: 'number', required: true },
+      { key: 'assessmentDate', label: '评估基准日', placeholder: '例如：2026-03-31', type: 'text' },
+      { key: 'listingExchange', label: '挂牌交易中心/场所', placeholder: '例如：上海联合产权交易所', type: 'text' },
+      { key: 'targetBuyerRequirement', label: '意向受让方资格要求', placeholder: '例如：合格机构投资者', type: 'text' },
+      { key: 'registrationStatus', label: '挂牌登记进展情况', placeholder: '例如：已获董事会通过，正挂牌公示中', type: 'text' },
+    ],
+  },
+  {
+    id: 'domain-debt-restructure',
+    code: 'DEBT_RESTRUCTURE',
+    label: '债务重组',
+    description: '债务展期、减免、增信和现金流重排。',
+    themeColor: 'emerald',
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    fields: [
+      { key: 'debtorName', label: '债务重组主体', placeholder: '例如：荣盛重工机电设备工程（常州）有限公司', type: 'text', required: true },
+      { key: 'originalDebt', label: '重组前债务总额 (万元)', placeholder: '例如：8900', type: 'number', required: true },
+      { key: 'exemptAmount', label: '本金规避/豁免金额 (万元)', placeholder: '例如：800', type: 'number' },
+      { key: 'newInterestRate', label: '重组后执行年利率 (%)', placeholder: '例如：4.25', type: 'number' },
+      { key: 'repaymentInstalments', label: '还款宽限及分期计划', placeholder: '例如：分3期偿还', type: 'text' },
+      { key: 'newGuarantees', label: '新增补强担保措施', placeholder: '例如：产业基金提供差额补足承诺', type: 'text' },
+    ],
+  },
+  {
+    id: 'domain-bankruptcy-reorg',
+    code: 'BANKRUPTCY_REORG',
+    label: '破产重整',
+    description: '司法重整投资、债权清偿方案和管理人协同。',
+    themeColor: 'amber',
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    fields: [
+      { key: 'courtInCharge', label: '受理重整法院', placeholder: '例如：常州市中级人民法院', type: 'text', required: true },
+      { key: 'administratorName', label: '重整破产管理人名称', placeholder: '例如：某律师事务所管理人团队', type: 'text' },
+      { key: 'restructuringInvestment', label: '拟注入重整投资款总额 (万元)', placeholder: '例如：15000', type: 'number' },
+      { key: 'priorityDebts', label: '共益债及优先债权总计 (万元)', placeholder: '例如：8200', type: 'number' },
+      { key: 'ordinaryRecoveryRatio', label: '预计普通债权清偿率预测 (%)', placeholder: '例如：12.5', type: 'number' },
+      { key: 'planPassStatus', label: '重整草案过会表决结果', placeholder: '例如：第一次债权人会议表决通过', type: 'text' },
+    ],
+  },
+  {
+    id: 'domain-substantive-reorg',
+    code: 'SUBSTANTIVE_REORG',
+    label: '实质性重组',
+    description: '资产注入、平台承接、SPV隔离和盘活收益测算。',
+    themeColor: 'sky',
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    fields: [
+      { key: 'restructuringCapital', label: '重组资产注入资金额 (万元)', placeholder: '例如：10000', type: 'number', required: true },
+      { key: 'revitalizationScheme', label: '实物资产注入/盘活重塑方案', placeholder: '例如：由平台公司接收代建', type: 'text' },
+      { key: 'counterpartyStructure', label: '交易对手及重组SPV架构', placeholder: '例如：信托计划 + 有限合伙SPV', type: 'text' },
+      { key: 'associatedFinancing', label: '共益债配套融资金额 (万元)', placeholder: '例如：4500', type: 'number' },
+      { key: 'expectedGrossMargin', label: '预期复合盘活毛收益率 (%)', placeholder: '例如：15.0', type: 'number' },
+    ],
+  },
+  {
+    id: 'domain-standardized-debt',
+    code: 'STANDARDIZED_DEBT',
+    label: '标准化债权投资',
+    description: '标准化债券、固收产品和证券化资产投资审查。',
+    themeColor: 'cyan',
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    fields: [
+      { key: 'investmentTarget', label: '核心投资标的 / 证券代码', placeholder: '例如：CMBS代码0981', type: 'text', required: true },
+      { key: 'couponRate', label: '票面或产品预期年收益率 (%)', placeholder: '例如：5.8', type: 'number' },
+      { key: 'creditRating', label: '最新主体/债务信用评级', placeholder: '例如：AAA 级', type: 'text' },
+      { key: 'subscriptionAmount', label: '拟认购出资金额 (万元)', placeholder: '例如：5000', type: 'number', required: true },
+      { key: 'maturityDate', label: '产品到期及本息退出安排', placeholder: '例如：36个月到期', type: 'text' },
+    ],
+  },
+  {
+    id: 'domain-batch-personal-npa',
+    code: 'BATCH_PERSONAL_NPA',
+    label: '批量个人不良资产收购',
+    description: '批量个贷资产包收购、催清收策略和外包合规。',
+    themeColor: 'rose',
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+    fields: [
+      { key: 'totalAccounts', label: '资产包总共包含户数 (户)', placeholder: '例如：1150', type: 'number', required: true },
+      { key: 'averageDue', label: '件均笔数欠款本息金额 (元)', placeholder: '例如：45000', type: 'number' },
+      { key: 'acquisitionDiscount', label: '批量包整体收购折扣率 (%)', placeholder: '例如：1.8', type: 'number' },
+      { key: 'collateralSecuredRatio', label: '其中抵押担保类件数占比 (%)', placeholder: '例如：15.0', type: 'number' },
+      { key: 'outsourcingStrategy', label: '催收外包及线上绿色诉调策略', placeholder: '例如：委托优质电催行', type: 'text' },
+    ],
+  },
+];
+
+const roleTemplates: Array<Pick<AgentRole, 'agentType' | 'name' | 'role' | 'defaultTemperature'>> = [
+  { agentType: 'law_review', name: '法务合规专家', role: '审核合规合法性、优先权及债务隔离红线', defaultTemperature: 0.15 },
+  { agentType: 'evaluation', name: '项目评估专家', role: '抵质押物折扣变现重估、还原率及 LTV 测算', defaultTemperature: 0.2 },
+  { agentType: 'risk_review', name: '风险评估专家', role: '统筹主体违约概率、准入红线和风险缓释措施', defaultTemperature: 0.1 },
+  { agentType: 'industry', name: '行业分析专家', role: '识别行业周期、区域供需、退出路径和资产流动性', defaultTemperature: 0.2 },
+];
+
+export const seedAgentRoles: AgentRole[] = seedAgentDomains.flatMap(domain => roleTemplates.map(role => ({
+  id: `role-${domain.code.toLowerCase().replace(/_/g, '-')}-${role.agentType}`,
+  domainId: domain.id,
+  agentType: role.agentType,
+  name: role.name,
+  role: role.role,
+  defaultTemperature: role.defaultTemperature,
+  status: 'active',
+  createdAt: seedCreatedAt,
+  updatedAt: seedCreatedAt,
+})));
+
+function roleId(domainCode: string, agentType: string) {
+  return `role-${domainCode.toLowerCase().replace(/_/g, '-')}-${agentType}`;
+}
+
+export const seedAgentWorkGroups: AgentWorkGroup[] = [
+  ...['诉讼管理', '合规审查', '资产处置', '法律风险防控'].map(name => ({
+    id: `group-domain-npa-acquisition-law-${name}`,
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    name,
+    status: 'active' as const,
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  })),
+  ...seedAgentRoles.filter(role => role.agentType !== 'law_review' || role.domainId !== 'domain-npa-acquisition').map(role => ({
+    id: `group-${role.id}-default`,
+    domainId: role.domainId,
+    roleId: role.id,
+    name: role.agentType === 'evaluation' ? '估值与测算' : role.agentType === 'risk_review' ? '风险识别与缓释' : role.agentType === 'industry' ? '行业与市场研判' : '合规审查',
+    status: 'active' as const,
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  })),
+];
+
+function defaultDefinition(name: string, workSteps: string[], knowledgeItemIds: string[] = [], outputTemplate?: string) {
+  return {
+    workSteps,
+    knowledgeItemIds,
+    outputTemplate: outputTemplate || `# ${name}报告\n\n## 一、审查对象\n\n## 二、关键发现\n\n## 三、风险与合规判断\n\n## 四、处理建议\n`,
+    systemPrompt: `你是 AMC ${name}智能体，请基于项目资料、知识资产和成果模板完成专业审查。`,
+    userPrompt: `请执行「${name}」，输出结构化审查结论并保留证据引用。`,
+    tools: ['knowledge_search'],
+    skills: [name],
+  };
+}
+
+export const seedAgentWorkItems: AgentWorkItem[] = [
+  {
+    id: 'workitem-law-case-intake',
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    groupId: 'group-domain-npa-acquisition-law-诉讼管理',
+    name: '案件接收与分类',
+    description: '接收涉诉资料并完成案件类型、管辖、阶段和证据状态分类。',
+    definition: defaultDefinition('案件接收与分类', ['核对案件基础资料', '识别诉讼阶段与管辖法院', '分类债权追偿路径', '形成案件接收分类表'], ['kn-1', 'kn-2']),
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  },
+  {
+    id: 'workitem-law-pre-suit-review',
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    groupId: 'group-domain-npa-acquisition-law-诉讼管理',
+    name: '诉前调查与评估',
+    description: '评估诉前证据、追偿主体、保全可能性和诉讼成本收益。',
+    definition: defaultDefinition('诉前调查与评估', ['检查诉前资料完整性', '评估主债务人与担保人追偿价值', '识别诉讼障碍', '输出诉前评估意见'], ['kn-2', 'kn-6']),
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  },
+  {
+    id: 'workitem-law-preservation',
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    groupId: 'group-domain-npa-acquisition-law-诉讼管理',
+    name: '财产保全申请',
+    description: '判断保全对象、额度、担保要求和执行可行性。',
+    definition: defaultDefinition('财产保全申请', ['识别可保全财产', '核验保全额度', '检查保全担保材料', '形成保全申请建议'], ['kn-2']),
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  },
+  {
+    id: 'workitem-law-new-business-compliance',
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    groupId: 'group-domain-npa-acquisition-law-合规审查',
+    name: '新业务合规审查',
+    description: '对新业务资料完整性、交易结构、监管要求和公司内规进行合规审查。',
+    definition: defaultDefinition('新业务合规审查', ['检查资料完整性', '阅读资料', '运用专业知识识别合规性', '按公司格式形成合规报告'], ['kn-1', 'kn-2', 'kn-6'], '# 新业务合规审查报告\n\n## 一、项目与交易概览\n\n## 二、资料完整性核验\n\n## 三、逐项合规审查\n\n## 四、风险等级与整改路径\n\n## 五、审查结论\n'),
+    status: 'active',
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  },
+  ...['监管政策跟踪', '内部制度合规性评估', '合规培训'].map(name => ({
+    id: `workitem-law-${name}`,
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    groupId: 'group-domain-npa-acquisition-law-合规审查',
+    name,
+    description: `${name}工作项定义。`,
+    definition: defaultDefinition(name, ['收集资料', '对照知识资产', '形成审查要点', '输出工作成果'], ['kn-1', 'kn-6']),
+    status: 'active' as const,
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  })),
+  ...['权属尽调', '处置方案合规性审查', '挂牌出售法务支持'].map(name => ({
+    id: `workitem-law-${name}`,
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    groupId: 'group-domain-npa-acquisition-law-资产处置',
+    name,
+    description: `${name}工作项定义。`,
+    definition: defaultDefinition(name, ['核验权属资料', '识别处置限制', '审查交易安排', '形成法务支持意见'], ['kn-1', 'kn-2']),
+    status: 'active' as const,
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  })),
+  ...['风险识别与分级', '诉讼风险台账管理'].map(name => ({
+    id: `workitem-law-${name}`,
+    domainId: 'domain-npa-acquisition',
+    roleId: roleId('NPA_ACQUISITION', 'law_review'),
+    groupId: 'group-domain-npa-acquisition-law-法律风险防控',
+    name,
+    description: `${name}工作项定义。`,
+    definition: defaultDefinition(name, ['识别风险事项', '划分风险等级', '建立跟踪台账', '输出风险防控建议'], ['kn-2', 'kn-6']),
+    status: 'active' as const,
+    createdAt: seedCreatedAt,
+    updatedAt: seedCreatedAt,
+  })),
+  ...seedAgentWorkGroups.filter(group => group.id.endsWith('-default')).map(group => {
+    const role = seedAgentRoles.find(item => item.id === group.roleId)!;
+    const name = role.agentType === 'evaluation' ? '估值测算复核' : role.agentType === 'risk_review' ? '风险等级评定' : role.agentType === 'industry' ? '行业周期研判' : '专项审查';
+    return {
+      id: `workitem-${role.id}-default`,
+      domainId: group.domainId,
+      roleId: group.roleId,
+      groupId: group.id,
+      name,
+      description: `${role.name}默认工作项，可按业务需要继续细化。`,
+      definition: defaultDefinition(name, ['读取项目资料', '关联知识资产', '形成专业判断', '输出结构化报告'], role.agentType === 'evaluation' ? ['kn-3', 'kn-5'] : role.agentType === 'risk_review' ? ['kn-6'] : ['kn-7']),
+      status: 'active' as const,
+      createdAt: seedCreatedAt,
+      updatedAt: seedCreatedAt,
+    };
+  }),
 ];
 
 export const qccDatabase: Record<string, unknown> = {

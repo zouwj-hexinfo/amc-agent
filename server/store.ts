@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { AMCProject, EvaluationRecord, KnowledgeAttachment, KnowledgeItem, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
+import type { AgentConfigBundle, AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, AgentWorkItemDefinition, AMCProject, EvaluationRecord, KnowledgeAttachment, KnowledgeItem, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
 import {
   createInitialAmcEvaluationState,
   reduceAmcEvaluationEvent,
@@ -20,7 +20,7 @@ import {
   type KnowledgeSearchResponse,
   type KnowledgeWriteSuggestion,
 } from './knowledge-orchestrator';
-import { seedKnowledgeBase, seedMarketObjects, seedProjects } from './seed-data';
+import { seedAgentDomains, seedAgentRoles, seedAgentWorkGroups, seedAgentWorkItems, seedKnowledgeBase, seedMarketObjects, seedProjects } from './seed-data';
 
 export type HermesEvent = AmcEvaluationEvent | AnalysisEvent;
 export type SequencedHermesEvent = { sequence: number; event: HermesEvent };
@@ -43,6 +43,10 @@ export type AnalysisRecord = {
     knowledgeRequests?: KnowledgeSearchResponse[];
     knowledgeWriteSuggestions?: KnowledgeWriteSuggestion[];
     knowledgeProtocolParseFailures?: Array<{ message: string; raw: string; createdAt: string }>;
+    agentDomainId?: string;
+    agentRoleId?: string;
+    agentWorkItemId?: string;
+    agentWorkItemDefinition?: AgentWorkItemDefinition;
   };
   state: AmcEvaluationState | null;
   events: HermesEvent[];
@@ -117,6 +121,32 @@ function runMigrations(store: Database) {
       json text not null,
       updated_at text not null
     );
+    create table if not exists agent_domains (
+      id text primary key,
+      json text not null,
+      updated_at text not null
+    );
+    create table if not exists agent_roles (
+      id text primary key,
+      domain_id text not null,
+      json text not null,
+      updated_at text not null
+    );
+    create table if not exists agent_work_groups (
+      id text primary key,
+      domain_id text not null,
+      role_id text not null,
+      json text not null,
+      updated_at text not null
+    );
+    create table if not exists agent_work_items (
+      id text primary key,
+      domain_id text not null,
+      role_id text not null,
+      group_id text not null,
+      json text not null,
+      updated_at text not null
+    );
     create table if not exists evaluation_records (
       id text primary key,
       project_id text not null,
@@ -158,6 +188,13 @@ function seedDefaults() {
   if (knowledgeCount === 0) seedKnowledgeBase.forEach(upsertKnowledgeItem);
   const marketObjectCount = store.query<{ count: number }, []>('select count(*) as count from market_objects').get()?.count ?? 0;
   if (marketObjectCount === 0) seedMarketObjects.forEach(upsertMarketObject);
+  const agentDomainCount = store.query<{ count: number }, []>('select count(*) as count from agent_domains').get()?.count ?? 0;
+  if (agentDomainCount === 0) {
+    seedAgentDomains.forEach(upsertAgentDomain);
+    seedAgentRoles.forEach(upsertAgentRole);
+    seedAgentWorkGroups.forEach(upsertAgentWorkGroup);
+    seedAgentWorkItems.forEach(upsertAgentWorkItem);
+  }
 }
 
 export function generateAnalysisId() {
@@ -203,6 +240,138 @@ export function deleteProjectFile(projectId: string, fileId: string) {
     .query('delete from project_files where project_id = ? and id = ?')
     .run(projectId, fileId);
   return result.changes > 0;
+}
+
+export function listAgentDomains(includeInactive = true) {
+  return database()
+    .query<JsonRow, []>('select * from agent_domains order by json_extract(json, "$.createdAt") asc')
+    .all()
+    .map(row => JSON.parse(row.json) as AgentDomain)
+    .filter(item => includeInactive || item.status !== 'inactive');
+}
+
+export function getAgentDomain(id: string) {
+  const row = database().query<JsonRow, [string]>('select * from agent_domains where id = ?').get(id);
+  return row ? JSON.parse(row.json) as AgentDomain : null;
+}
+
+export function getAgentDomainByCode(code: string) {
+  return listAgentDomains(true).find(domain => domain.code === code) || null;
+}
+
+export function upsertAgentDomain(domain: AgentDomain) {
+  database()
+    .query('insert into agent_domains (id, json, updated_at) values (?, ?, ?) on conflict(id) do update set json = excluded.json, updated_at = excluded.updated_at')
+    .run(domain.id, JSON.stringify(domain), domain.updatedAt || new Date().toISOString());
+  return domain;
+}
+
+export function deleteAgentDomain(id: string) {
+  const domain = getAgentDomain(id);
+  if (!domain) return null;
+  return upsertAgentDomain({ ...domain, status: 'inactive', updatedAt: new Date().toISOString() });
+}
+
+export function listAgentRoles(input: { domainId?: string; includeInactive?: boolean } = {}) {
+  const rows = input.domainId
+    ? database().query<JsonRow, [string]>('select * from agent_roles where domain_id = ? order by json_extract(json, "$.createdAt") asc').all(input.domainId)
+    : database().query<JsonRow, []>('select * from agent_roles order by json_extract(json, "$.createdAt") asc').all();
+  return rows
+    .map(row => JSON.parse(row.json) as AgentRole)
+    .filter(item => input.includeInactive !== false || item.status !== 'inactive');
+}
+
+export function getAgentRole(id: string) {
+  const row = database().query<JsonRow, [string]>('select * from agent_roles where id = ?').get(id);
+  return row ? JSON.parse(row.json) as AgentRole : null;
+}
+
+export function upsertAgentRole(role: AgentRole) {
+  database()
+    .query('insert into agent_roles (id, domain_id, json, updated_at) values (?, ?, ?, ?) on conflict(id) do update set domain_id = excluded.domain_id, json = excluded.json, updated_at = excluded.updated_at')
+    .run(role.id, role.domainId, JSON.stringify(role), role.updatedAt || new Date().toISOString());
+  return role;
+}
+
+export function deleteAgentRole(id: string) {
+  const role = getAgentRole(id);
+  if (!role) return null;
+  return upsertAgentRole({ ...role, status: 'inactive', updatedAt: new Date().toISOString() });
+}
+
+export function listAgentWorkGroups(input: { domainId?: string; roleId?: string; includeInactive?: boolean } = {}) {
+  let rows: JsonRow[];
+  if (input.roleId) {
+    rows = database().query<JsonRow, [string]>('select * from agent_work_groups where role_id = ? order by json_extract(json, "$.createdAt") asc').all(input.roleId);
+  } else if (input.domainId) {
+    rows = database().query<JsonRow, [string]>('select * from agent_work_groups where domain_id = ? order by json_extract(json, "$.createdAt") asc').all(input.domainId);
+  } else {
+    rows = database().query<JsonRow, []>('select * from agent_work_groups order by json_extract(json, "$.createdAt") asc').all();
+  }
+  return rows
+    .map(row => JSON.parse(row.json) as AgentWorkGroup)
+    .filter(item => input.includeInactive !== false || item.status !== 'inactive');
+}
+
+export function getAgentWorkGroup(id: string) {
+  const row = database().query<JsonRow, [string]>('select * from agent_work_groups where id = ?').get(id);
+  return row ? JSON.parse(row.json) as AgentWorkGroup : null;
+}
+
+export function upsertAgentWorkGroup(group: AgentWorkGroup) {
+  database()
+    .query('insert into agent_work_groups (id, domain_id, role_id, json, updated_at) values (?, ?, ?, ?, ?) on conflict(id) do update set domain_id = excluded.domain_id, role_id = excluded.role_id, json = excluded.json, updated_at = excluded.updated_at')
+    .run(group.id, group.domainId, group.roleId, JSON.stringify(group), group.updatedAt || new Date().toISOString());
+  return group;
+}
+
+export function deleteAgentWorkGroup(id: string) {
+  const group = getAgentWorkGroup(id);
+  if (!group) return null;
+  return upsertAgentWorkGroup({ ...group, status: 'inactive', updatedAt: new Date().toISOString() });
+}
+
+export function listAgentWorkItems(input: { domainId?: string; roleId?: string; groupId?: string; includeInactive?: boolean } = {}) {
+  let rows: JsonRow[];
+  if (input.groupId) {
+    rows = database().query<JsonRow, [string]>('select * from agent_work_items where group_id = ? order by json_extract(json, "$.createdAt") asc').all(input.groupId);
+  } else if (input.roleId) {
+    rows = database().query<JsonRow, [string]>('select * from agent_work_items where role_id = ? order by json_extract(json, "$.createdAt") asc').all(input.roleId);
+  } else if (input.domainId) {
+    rows = database().query<JsonRow, [string]>('select * from agent_work_items where domain_id = ? order by json_extract(json, "$.createdAt") asc').all(input.domainId);
+  } else {
+    rows = database().query<JsonRow, []>('select * from agent_work_items order by json_extract(json, "$.createdAt") asc').all();
+  }
+  return rows
+    .map(row => JSON.parse(row.json) as AgentWorkItem)
+    .filter(item => input.includeInactive !== false || item.status !== 'inactive');
+}
+
+export function getAgentWorkItem(id: string) {
+  const row = database().query<JsonRow, [string]>('select * from agent_work_items where id = ?').get(id);
+  return row ? JSON.parse(row.json) as AgentWorkItem : null;
+}
+
+export function upsertAgentWorkItem(item: AgentWorkItem) {
+  database()
+    .query('insert into agent_work_items (id, domain_id, role_id, group_id, json, updated_at) values (?, ?, ?, ?, ?, ?) on conflict(id) do update set domain_id = excluded.domain_id, role_id = excluded.role_id, group_id = excluded.group_id, json = excluded.json, updated_at = excluded.updated_at')
+    .run(item.id, item.domainId, item.roleId, item.groupId, JSON.stringify(item), item.updatedAt || new Date().toISOString());
+  return item;
+}
+
+export function deleteAgentWorkItem(id: string) {
+  const item = getAgentWorkItem(id);
+  if (!item) return null;
+  return upsertAgentWorkItem({ ...item, status: 'inactive', updatedAt: new Date().toISOString() });
+}
+
+export function getAgentConfigBundle(includeInactive = true): AgentConfigBundle {
+  return {
+    domains: listAgentDomains(includeInactive),
+    roles: listAgentRoles({ includeInactive }),
+    workGroups: listAgentWorkGroups({ includeInactive }),
+    workItems: listAgentWorkItems({ includeInactive }),
+  };
 }
 
 export function listReportRevisions(input: { projectId?: string; recordId?: string } = {}) {

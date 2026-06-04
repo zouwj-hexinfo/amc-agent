@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import * as XLSX from 'xlsx';
-import type { KnowledgeAttachment, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
+import type { AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, KnowledgeAttachment, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
 import { mergeHermesKnowledgeAttachmentPreview, parseKnowledgeAttachmentFile, previewKnowledgeAttachmentFiles } from './knowledge-attachment-parser';
 
 process.env.XFAS_ANALYSIS_DB_PATH = ':memory:';
@@ -114,6 +114,83 @@ describe('market object store helpers', () => {
     const reset = store.resetMarketObjects();
     expect(reset.length).toBeGreaterThan(0);
     expect(reset[0].rows.length).toBeGreaterThan(0);
+  });
+});
+
+describe('agent configuration store helpers', () => {
+  test('seeds domains, roles, work groups, and work items', () => {
+    const bundle = store.getAgentConfigBundle();
+    expect(bundle.domains.some(item => item.code === 'NPA_ACQUISITION')).toBe(true);
+    expect(bundle.roles.some(item => item.agentType === 'industry')).toBe(true);
+    expect(bundle.workGroups.some(item => item.name === '合规审查')).toBe(true);
+    expect(bundle.workItems.some(item => item.name === '新业务合规审查')).toBe(true);
+  });
+
+  test('upserts and soft-deletes agent config records', () => {
+    const now = '2026-06-04T00:00:00.000Z';
+    const domain: AgentDomain = {
+      id: 'domain-test-agent-config',
+      code: 'TEST_AGENT_CONFIG',
+      label: '测试领域',
+      themeColor: 'indigo',
+      fields: [],
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.upsertAgentDomain(domain);
+    expect(store.getAgentDomain(domain.id)?.label).toBe('测试领域');
+
+    const role: AgentRole = {
+      id: 'role-test-agent-config',
+      domainId: domain.id,
+      agentType: 'law_review',
+      name: '测试法务专家',
+      role: '测试职责',
+      defaultTemperature: 0.1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.upsertAgentRole(role);
+
+    const group: AgentWorkGroup = {
+      id: 'group-test-agent-config',
+      domainId: domain.id,
+      roleId: role.id,
+      name: '测试工作组',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.upsertAgentWorkGroup(group);
+
+    const item: AgentWorkItem = {
+      id: 'workitem-test-agent-config',
+      domainId: domain.id,
+      roleId: role.id,
+      groupId: group.id,
+      name: '测试工作项',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      definition: {
+        workSteps: ['检查资料完整性'],
+        knowledgeItemIds: ['kn-1'],
+        outputTemplate: '# 测试模板',
+        systemPrompt: '系统提示词',
+        userPrompt: '用户提示词',
+        tools: ['knowledge_search'],
+        skills: ['测试技能'],
+      },
+    };
+    store.upsertAgentWorkItem(item);
+    expect(store.getAgentWorkItem(item.id)?.definition.knowledgeItemIds).toContain('kn-1');
+
+    expect(store.deleteAgentWorkItem(item.id)?.status).toBe('inactive');
+    expect(store.deleteAgentWorkGroup(group.id)?.status).toBe('inactive');
+    expect(store.deleteAgentRole(role.id)?.status).toBe('inactive');
+    expect(store.deleteAgentDomain(domain.id)?.status).toBe('inactive');
   });
 });
 

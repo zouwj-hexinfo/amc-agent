@@ -2,25 +2,39 @@ import { Hono } from 'hono';
 import type { HonoRequest } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { cors } from 'hono/cors';
-import type { AMCProject, AgentType, EvaluationRecord, KnowledgeAttachmentPreview, KnowledgeItem, MarketObject, ProjectFile, ProjectType, ReportRevision } from '../src/types';
+import type { AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, AgentWorkItemDefinition, AMCProject, AgentType, EvaluationRecord, KnowledgeAttachmentPreview, KnowledgeItem, MarketObject, ProjectFile, ProjectType, ReportRevision } from '../src/types';
 import type { StartAnalysisRequest } from '../src/hermes/types';
 import { createAnalysisEventHub } from './analysis-event-hub';
 import {
   addEvaluationRecord,
   appendAnalysisEvent,
   createAnalysisRecord,
+  deleteAgentDomain,
+  deleteAgentRole,
+  deleteAgentWorkGroup,
+  deleteAgentWorkItem,
   deleteKnowledgeAttachment,
   deleteKnowledgeItem,
   deleteMarketObject,
   deleteProjectFile,
   deleteReportRevision,
   generateAnalysisId,
+  getAgentConfigBundle,
+  getAgentDomain,
+  getAgentDomainByCode,
+  getAgentRole,
+  getAgentWorkGroup,
+  getAgentWorkItem,
   getKnowledgeItem,
   getAnalysisRecord,
   getLatestAnalysisRecord,
   getMarketObject,
   getProject,
   listKnowledgeAttachments,
+  listAgentDomains,
+  listAgentRoles,
+  listAgentWorkGroups,
+  listAgentWorkItems,
   listKnowledgeItems,
   listKnowledgeWriteSuggestions,
   listMarketObjects,
@@ -31,6 +45,10 @@ import {
   searchKnowledgeItems,
   updateKnowledgeWriteSuggestionStatus,
   upsertKnowledgeAttachment,
+  upsertAgentDomain,
+  upsertAgentRole,
+  upsertAgentWorkGroup,
+  upsertAgentWorkItem,
   upsertKnowledgeItem,
   upsertMarketObject,
   upsertProjectFile,
@@ -67,6 +85,7 @@ import { mergeHermesKnowledgeAttachmentPreview, parseKnowledgeAttachmentFile, pr
 const app = new Hono();
 const hermesAvailable = process.env.HERMES_AGENT_DISABLED !== '1';
 const port = Number(process.env.PORT || 3100);
+const serverIdleTimeout = Math.max(10, Number(process.env.API_IDLE_TIMEOUT_SECONDS || 120));
 
 const analysisEventHub = createAnalysisEventHub({
   getRecord: getAnalysisRecord,
@@ -264,6 +283,136 @@ app.get('/api/assets/minio/reports/:rptId/:reportId', async (c) => {
   return await createMinioReportAssetResponse(asset);
 });
 
+app.get('/api/agent-config', (c) => c.json(getAgentConfigBundle(true)));
+
+app.get('/api/agent-config/domains', (c) => c.json(listAgentDomains(true)));
+
+app.post('/api/agent-config/domains', async (c) => {
+  const domain = normalizeAgentDomain(await c.req.json<Partial<AgentDomain>>());
+  if (!domain) return c.json({ error: 'Invalid domain payload' }, 400);
+  return c.json(upsertAgentDomain(domain), 201);
+});
+
+app.put('/api/agent-config/domains/:id', async (c) => {
+  const current = getAgentDomain(c.req.param('id'));
+  if (!current) return c.json({ error: 'Domain not found' }, 404);
+  const domain = normalizeAgentDomain({ ...current, ...await c.req.json<Partial<AgentDomain>>(), id: current.id });
+  if (!domain) return c.json({ error: 'Invalid domain payload' }, 400);
+  return c.json(upsertAgentDomain(domain));
+});
+
+app.delete('/api/agent-config/domains/:id', (c) => {
+  const domain = deleteAgentDomain(c.req.param('id'));
+  if (!domain) return c.json({ error: 'Domain not found' }, 404);
+  return c.json(domain);
+});
+
+app.get('/api/agent-config/roles', (c) => c.json(listAgentRoles({
+  domainId: c.req.query('domainId') || undefined,
+  includeInactive: true,
+})));
+
+app.post('/api/agent-config/roles', async (c) => {
+  const role = normalizeAgentRole(await c.req.json<Partial<AgentRole>>());
+  if (!role) return c.json({ error: 'Invalid role payload' }, 400);
+  return c.json(upsertAgentRole(role), 201);
+});
+
+app.put('/api/agent-config/roles/:id', async (c) => {
+  const current = getAgentRole(c.req.param('id'));
+  if (!current) return c.json({ error: 'Role not found' }, 404);
+  const role = normalizeAgentRole({ ...current, ...await c.req.json<Partial<AgentRole>>(), id: current.id });
+  if (!role) return c.json({ error: 'Invalid role payload' }, 400);
+  return c.json(upsertAgentRole(role));
+});
+
+app.delete('/api/agent-config/roles/:id', (c) => {
+  const role = deleteAgentRole(c.req.param('id'));
+  if (!role) return c.json({ error: 'Role not found' }, 404);
+  return c.json(role);
+});
+
+app.get('/api/agent-config/work-groups', (c) => c.json(listAgentWorkGroups({
+  domainId: c.req.query('domainId') || undefined,
+  roleId: c.req.query('roleId') || undefined,
+  includeInactive: true,
+})));
+
+app.post('/api/agent-config/work-groups', async (c) => {
+  const group = normalizeAgentWorkGroup(await c.req.json<Partial<AgentWorkGroup>>());
+  if (!group) return c.json({ error: 'Invalid work group payload' }, 400);
+  return c.json(upsertAgentWorkGroup(group), 201);
+});
+
+app.put('/api/agent-config/work-groups/:id', async (c) => {
+  const current = getAgentWorkGroup(c.req.param('id'));
+  if (!current) return c.json({ error: 'Work group not found' }, 404);
+  const group = normalizeAgentWorkGroup({ ...current, ...await c.req.json<Partial<AgentWorkGroup>>(), id: current.id });
+  if (!group) return c.json({ error: 'Invalid work group payload' }, 400);
+  return c.json(upsertAgentWorkGroup(group));
+});
+
+app.delete('/api/agent-config/work-groups/:id', (c) => {
+  const group = deleteAgentWorkGroup(c.req.param('id'));
+  if (!group) return c.json({ error: 'Work group not found' }, 404);
+  return c.json(group);
+});
+
+app.get('/api/agent-config/work-items', (c) => c.json(listAgentWorkItems({
+  domainId: c.req.query('domainId') || undefined,
+  roleId: c.req.query('roleId') || undefined,
+  groupId: c.req.query('groupId') || undefined,
+  includeInactive: true,
+})));
+
+app.post('/api/agent-config/work-items', async (c) => {
+  const item = normalizeAgentWorkItem(await c.req.json<Partial<AgentWorkItem>>());
+  if (!item) return c.json({ error: 'Invalid work item payload' }, 400);
+  return c.json(upsertAgentWorkItem(item), 201);
+});
+
+app.put('/api/agent-config/work-items/:id', async (c) => {
+  const current = getAgentWorkItem(c.req.param('id'));
+  if (!current) return c.json({ error: 'Work item not found' }, 404);
+  const item = normalizeAgentWorkItem({ ...current, ...await c.req.json<Partial<AgentWorkItem>>(), id: current.id });
+  if (!item) return c.json({ error: 'Invalid work item payload' }, 400);
+  return c.json(upsertAgentWorkItem(item));
+});
+
+app.delete('/api/agent-config/work-items/:id', (c) => {
+  const item = deleteAgentWorkItem(c.req.param('id'));
+  if (!item) return c.json({ error: 'Work item not found' }, 404);
+  return c.json(item);
+});
+
+app.post('/api/agent-config/work-items/:id/generate-definition', async (c) => {
+  if (!hermesAvailable) return c.json({ message: 'Hermes Agent API 暂不可用，无法生成智能体定义。' }, 503);
+  const item = getAgentWorkItem(c.req.param('id'));
+  if (!item) return c.json({ error: 'Work item not found' }, 404);
+  const role = getAgentRole(item.roleId);
+  const domain = getAgentDomain(item.domainId);
+  if (!role || !domain) return c.json({ error: 'Work item parent config missing' }, 400);
+  const knowledgeItems = item.definition.knowledgeItemIds
+    .map(id => getKnowledgeItem(id))
+    .filter(Boolean) as KnowledgeItem[];
+
+  try {
+    const reply = await askHermes({
+      prompt: buildAgentDefinitionGenerationPrompt(domain, role, item, knowledgeItems),
+      sessionId: `agent-definition-${item.id}-${Date.now()}`,
+      conversationTitle: `生成${item.name}智能体定义`,
+    });
+    return c.json({
+      workItemId: item.id,
+      definition: parseAgentDefinitionPreview(reply, item.definition),
+      raw: reply,
+    });
+  } catch (error) {
+    console.error(error);
+    return c.json({ message: 'Hermes 智能体定义生成失败。' }, 502);
+  }
+});
+
 app.get('/api/projects', (c) => c.json(listProjects()));
 
 app.post('/api/projects', async (c) => {
@@ -347,11 +496,20 @@ app.post('/api/projects/:id/evaluate', async (c) => {
     selectedSkills?: string[];
     orchestratorMode?: 'single' | 'chain' | 'discuss' | 'master-slave';
     userInstruction?: string;
+    domainId?: string;
+    roleId?: string;
+    workItemId?: string;
   }>();
   const mode = body.orchestratorMode || 'single';
-  const skills = body.selectedSkills || [];
   const analysisId = generateAnalysisId();
   const targetAgentKey = mode !== 'single' ? 'orchestrator' : (body.agentType || 'law_review');
+  const selectedDomain = body.domainId ? getAgentDomain(body.domainId) : getAgentDomainByCode(project.projectType);
+  const selectedRole = body.roleId ? getAgentRole(body.roleId) : null;
+  const selectedWorkItem = body.workItemId ? getAgentWorkItem(body.workItemId) : null;
+  const selectedDefinition = selectedWorkItem?.definition;
+  const skills = body.selectedSkills?.length
+    ? body.selectedSkills
+    : selectedDefinition?.skills || [];
   const knowledgePlan = buildKnowledgeRetrievalPlan(project, targetAgentKey, body.userInstruction || '');
   const knowledgeCitations = retrieveKnowledge(knowledgePlan, listKnowledgeItems());
   const knowledgeContext = formatKnowledgeContext(knowledgeCitations);
@@ -366,9 +524,16 @@ app.post('/api/projects/:id/evaluate', async (c) => {
   let run;
   try {
     run = await createHermesRun({
-      input: buildAmcRunInput(project, activeKbs, body.userInstruction, knowledgeContext),
+      input: buildAmcRunInput(project, activeKbs, body.userInstruction, knowledgeContext, {
+        domain: selectedDomain || undefined,
+        role: selectedRole || undefined,
+        workItem: selectedWorkItem || undefined,
+      }),
       sessionId: `amc-analysis-${analysisId}`,
-      instructions: buildAmcEvaluationRunInstructions(),
+      instructions: [
+        buildAmcEvaluationRunInstructions(),
+        buildAgentRuntimeInstructions(selectedDomain || undefined, selectedRole || undefined, selectedWorkItem || undefined),
+      ].filter(Boolean).join('\n\n'),
     });
   } catch (error) {
     console.error('Hermes Agent API run creation failed:', error);
@@ -388,6 +553,10 @@ app.post('/api/projects/:id/evaluate', async (c) => {
       knowledgeBases: activeKbs,
       knowledgePlan,
       knowledgeCitations,
+      agentDomainId: selectedDomain?.id,
+      agentRoleId: selectedRole?.id,
+      agentWorkItemId: selectedWorkItem?.id,
+      agentWorkItemDefinition: selectedDefinition,
       sensitiveWordsFlagged: findSensitiveWords(project),
     },
   });
@@ -838,7 +1007,13 @@ function appendHermesEventWithCompletion(analysisId: string, event: HermesEvent)
   return latest;
 }
 
-function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruction?: string, knowledgeContext?: string) {
+function buildAmcRunInput(
+  project: AMCProject,
+  activeKbs: string[],
+  userInstruction?: string,
+  knowledgeContext?: string,
+  agentRuntime?: { domain?: AgentDomain; role?: AgentRole; workItem?: AgentWorkItem },
+) {
   return [
     `项目名称：${project.name}`,
     `客户名称：${project.customerName}`,
@@ -850,6 +1025,7 @@ function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruct
     `项目说明：${project.description}`,
     `启用知识库：${activeKbs.join('、')}`,
     userInstruction ? `用户专项指令：${userInstruction}` : '',
+    agentRuntime ? buildAgentRuntimeInputBlock(agentRuntime.domain, agentRuntime.role, agentRuntime.workItem) : '',
     project.files?.length ? buildProjectFilesPromptBlock(project.files) : '',
     knowledgeContext,
     [
@@ -859,6 +1035,35 @@ function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruct
       '3. 如需更多本地知识，请输出 fenced JSON knowledge_search 协议块。',
       '4. 如形成可复用经验，只能输出 knowledge_write_suggestion 协议块，不能声称已写入正式知识库。',
     ].join('\n'),
+  ].filter(Boolean).join('\n');
+}
+
+function buildAgentRuntimeInputBlock(domain?: AgentDomain, role?: AgentRole, workItem?: AgentWorkItem) {
+  if (!domain && !role && !workItem) return '';
+  const definition = workItem?.definition;
+  return [
+    '【本次专家工作项配置】',
+    domain ? `产品领域：${domain.label}（${domain.code}）` : '',
+    role ? `岗位专家：${role.name}；岗位职责：${role.role}；默认温度：${role.defaultTemperature}` : '',
+    workItem ? `工作项：${workItem.name}${workItem.description ? `；说明：${workItem.description}` : ''}` : '',
+    definition?.workSteps?.length ? `工作定义：\n${definition.workSteps.map((step, index) => `${index + 1}. ${step}`).join('\n')}` : '',
+    definition?.knowledgeItemIds?.length ? `关联知识资产ID：${definition.knowledgeItemIds.join('、')}` : '',
+    definition?.tools?.length ? `依赖工具：${definition.tools.join('、')}` : '',
+    definition?.skills?.length ? `依赖 skills：${definition.skills.join('、')}` : '',
+    definition?.outputTemplate ? `成果模板：\n${definition.outputTemplate}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function buildAgentRuntimeInstructions(domain?: AgentDomain, role?: AgentRole, workItem?: AgentWorkItem) {
+  if (!role && !workItem) return '';
+  const definition = workItem?.definition;
+  return [
+    '【专家配置执行约束】',
+    domain ? `本次运行必须适配产品领域：${domain.label}。` : '',
+    role ? `本次运行的主责岗位专家为：${role.name}。${role.role}` : '',
+    definition?.systemPrompt ? `岗位系统提示词：\n${definition.systemPrompt}` : '',
+    definition?.userPrompt ? `工作项用户提示词：\n${definition.userPrompt}` : '',
+    definition?.outputTemplate ? '最终输出应尽量遵循工作项成果模板。' : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -874,6 +1079,164 @@ function buildProjectFilesPromptBlock(files: ProjectFile[]) {
       `  - 摘要：${(file.contentSnippet || '').slice(0, 800)}`,
     ].join('\n')),
   ].join('\n');
+}
+
+function normalizeAgentDomain(body: Partial<AgentDomain>): AgentDomain | null {
+  const code = body.code?.trim();
+  const label = body.label?.trim();
+  if (!code || !label) return null;
+  const now = new Date().toISOString();
+  return {
+    id: body.id || `domain-${slugId(code)}`,
+    code,
+    label,
+    description: body.description?.trim() || '',
+    themeColor: body.themeColor?.trim() || 'indigo',
+    fields: Array.isArray(body.fields) ? body.fields.map(field => ({
+      key: field.key?.trim() || '',
+      label: field.label?.trim() || '',
+      placeholder: field.placeholder?.trim() || '',
+      type: (field.type === 'number' || field.type === 'date' ? field.type : 'text') as 'text' | 'number' | 'date',
+      required: Boolean(field.required),
+    })).filter(field => field.key && field.label) : [],
+    status: body.status === 'inactive' ? 'inactive' : 'active',
+    createdAt: body.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+function normalizeAgentRole(body: Partial<AgentRole>): AgentRole | null {
+  if (!body.domainId || !getAgentDomain(body.domainId)) return null;
+  const name = body.name?.trim();
+  const role = body.role?.trim();
+  if (!name || !role) return null;
+  const agentType = isAgentType(body.agentType) ? body.agentType : 'law_review';
+  const now = new Date().toISOString();
+  return {
+    id: body.id || `role-${body.domainId}-${agentType}-${Date.now()}`,
+    domainId: body.domainId,
+    agentType,
+    name,
+    role,
+    defaultTemperature: clampNumber(Number(body.defaultTemperature ?? 0.15), 0, 1),
+    status: body.status === 'inactive' ? 'inactive' : 'active',
+    createdAt: body.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+function normalizeAgentWorkGroup(body: Partial<AgentWorkGroup>): AgentWorkGroup | null {
+  const role = body.roleId ? getAgentRole(body.roleId) : null;
+  if (!role) return null;
+  const name = body.name?.trim();
+  if (!name) return null;
+  const now = new Date().toISOString();
+  return {
+    id: body.id || `group-${body.roleId}-${Date.now()}`,
+    domainId: body.domainId || role.domainId,
+    roleId: role.id,
+    name,
+    description: body.description?.trim() || '',
+    status: body.status === 'inactive' ? 'inactive' : 'active',
+    createdAt: body.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+function normalizeAgentWorkItem(body: Partial<AgentWorkItem>): AgentWorkItem | null {
+  const group = body.groupId ? getAgentWorkGroup(body.groupId) : null;
+  const role = body.roleId ? getAgentRole(body.roleId) : group ? getAgentRole(group.roleId) : null;
+  if (!group || !role) return null;
+  const name = body.name?.trim();
+  if (!name) return null;
+  const now = new Date().toISOString();
+  return {
+    id: body.id || `workitem-${group.id}-${Date.now()}`,
+    domainId: body.domainId || group.domainId,
+    roleId: role.id,
+    groupId: group.id,
+    name,
+    description: body.description?.trim() || '',
+    definition: normalizeAgentWorkItemDefinition(body.definition, name),
+    status: body.status === 'inactive' ? 'inactive' : 'active',
+    createdAt: body.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+function normalizeAgentWorkItemDefinition(definition: Partial<AgentWorkItemDefinition> | undefined, fallbackName: string): AgentWorkItemDefinition {
+  return {
+    workSteps: normalizeStringList(definition?.workSteps).length ? normalizeStringList(definition?.workSteps) : ['检查资料完整性', '阅读资料', '识别专业问题', '形成报告'],
+    knowledgeItemIds: normalizeStringList(definition?.knowledgeItemIds),
+    outputTemplate: definition?.outputTemplate?.trim() || `# ${fallbackName}报告\n\n## 一、审查范围\n\n## 二、关键发现\n\n## 三、结论与建议\n`,
+    systemPrompt: definition?.systemPrompt?.trim() || `你是 AMC ${fallbackName}智能体，请完成专业审查。`,
+    userPrompt: definition?.userPrompt?.trim() || `请执行${fallbackName}并输出结构化结论。`,
+    tools: normalizeStringList(definition?.tools),
+    skills: normalizeStringList(definition?.skills).length ? normalizeStringList(definition?.skills) : [fallbackName],
+  };
+}
+
+function buildAgentDefinitionGenerationPrompt(domain: AgentDomain, role: AgentRole, item: AgentWorkItem, knowledgeItems: KnowledgeItem[]) {
+  return [
+    '你是 AMC 智能体配置架构师。请根据产品领域、岗位专家、工作定义、知识资产和成果模板生成智能体定义。',
+    '只输出 JSON 对象，不要输出解释、Markdown 或代码块。',
+    'JSON 结构必须严格为：{"systemPrompt":"...","userPrompt":"...","tools":["..."],"skills":["..."]}',
+    '',
+    `产品领域：${domain.label}（${domain.code}）`,
+    `岗位专家：${role.name}`,
+    `岗位职责：${role.role}`,
+    `工作项：${item.name}`,
+    `工作项说明：${item.description || '无'}`,
+    '',
+    '工作定义：',
+    item.definition.workSteps.map((step, index) => `${index + 1}. ${step}`).join('\n'),
+    '',
+    '知识资产：',
+    knowledgeItems.length
+      ? knowledgeItems.map(knowledge => `- [${knowledge.id}] ${knowledge.title}：${knowledge.content.slice(0, 300)}`).join('\n')
+      : '未选择具体知识资产，请生成可检索本地知识库的通用定义。',
+    '',
+    '成果模板：',
+    item.definition.outputTemplate.slice(0, 4000),
+  ].join('\n');
+}
+
+function parseAgentDefinitionPreview(reply: string, fallback: AgentWorkItemDefinition): AgentWorkItemDefinition {
+  const raw = reply.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    const parsed = JSON.parse(raw) as Partial<AgentWorkItemDefinition>;
+    return {
+      ...fallback,
+      systemPrompt: parsed.systemPrompt?.trim() || fallback.systemPrompt,
+      userPrompt: parsed.userPrompt?.trim() || fallback.userPrompt,
+      tools: normalizeStringList(parsed.tools).length ? normalizeStringList(parsed.tools) : fallback.tools,
+      skills: normalizeStringList(parsed.skills).length ? normalizeStringList(parsed.skills) : fallback.skills,
+    };
+  } catch {
+    return {
+      ...fallback,
+      systemPrompt: reply.trim() || fallback.systemPrompt,
+    };
+  }
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+  if (typeof value === 'string') return value.split(/[,，\n]/).map(item => item.trim()).filter(Boolean);
+  return [];
+}
+
+function isAgentType(value: unknown): value is AgentType {
+  return value === 'law_review' || value === 'risk_review' || value === 'evaluation' || value === 'industry' || value === 'orchestrator';
+}
+
+function slugId(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || `${Date.now()}`;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
 }
 
 function normalizeKnowledgeItem(body: Partial<KnowledgeItem> & { id?: string }): KnowledgeItem | null {
@@ -1282,7 +1645,8 @@ function buildHermesRunStreamFailureEvent(error: unknown, snapshot: HermesRunFai
 
 const server = Bun.serve({
   port,
+  idleTimeout: serverIdleTimeout,
   fetch: app.fetch,
 });
 
-console.log(`AMC Agent API listening on ${server.url}`);
+console.log(`AMC Agent API listening on ${server.url} (idleTimeout=${serverIdleTimeout}s)`);
