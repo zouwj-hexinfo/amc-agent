@@ -206,6 +206,21 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
     closeDrawer({ workItem: saved || item });
   };
 
+  const deleteWorkItemDraft = async () => {
+    if (!workItemDraft?.id || drawerMode !== "work-item-edit") return;
+    const confirmed = window.confirm(`确定删除工作项“${workItemDraft.name}”吗？历史配置会以停用方式保留。`);
+    if (!confirmed) return;
+    await apiSave(`/api/agent-config/work-items/${encodeURIComponent(workItemDraft.id)}`, "DELETE");
+    const nextItem = workItems.find(item => item.groupId === workItemDraft.groupId && item.id !== workItemDraft.id) || workItems.find(item => item.id !== workItemDraft.id) || null;
+    if (nextItem) {
+      setSelectedGroupId(nextItem.groupId);
+      setSelectedWorkItemId(nextItem.id);
+    } else {
+      setSelectedWorkItemId("");
+    }
+    closeDrawer({ workItem: nextItem });
+  };
+
   const generateDefinition = async () => {
     if (!workItemDraft) return;
     setIsGenerating(true);
@@ -432,6 +447,7 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
               onClearPreview={() => setGenerationPreview(null)}
               onToggleGroupStatus={() => groupDraft && setGroupDraft({ ...groupDraft, status: groupDraft.status === "inactive" ? "active" : "inactive" })}
               onToggleWorkItemStatus={() => workItemDraft && setWorkItemDraft({ ...workItemDraft, status: workItemDraft.status === "inactive" ? "active" : "inactive" })}
+              onDeleteWorkItem={() => void deleteWorkItemDraft()}
             />
           )}
         </div>
@@ -679,6 +695,7 @@ function ConfigDrawer(props: {
   onClearPreview: () => void;
   onToggleGroupStatus: () => void;
   onToggleWorkItemStatus: () => void;
+  onDeleteWorkItem: () => void;
 }) {
   const isGroupMode = props.mode === "group-create" || props.mode === "group-edit";
   const isCreate = props.mode === "group-create" || props.mode === "work-item-create";
@@ -773,9 +790,14 @@ function ConfigDrawer(props: {
               </button>
             )}
             {!isGroupMode && props.workItemDraft && props.mode === "work-item-edit" && (
-              <button type="button" onClick={props.onToggleWorkItemStatus} className="rounded-lg bg-slate-200 px-3 py-2 text-[11px] font-extrabold text-slate-700">
-                {props.workItemDraft.status === "inactive" ? "恢复工作项" : "停用工作项"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={props.onToggleWorkItemStatus} className="rounded-lg bg-slate-200 px-3 py-2 text-[11px] font-extrabold text-slate-700">
+                  {props.workItemDraft.status === "inactive" ? "恢复工作项" : "停用工作项"}
+                </button>
+                <button type="button" onClick={props.onDeleteWorkItem} className="rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-extrabold text-rose-700 hover:bg-rose-100">
+                  删除工作项
+                </button>
+              </div>
             )}
           </div>
           <div className="flex flex-wrap gap-2">
