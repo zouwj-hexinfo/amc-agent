@@ -309,7 +309,7 @@ app.delete('/api/agent-config/domains/:id', (c) => {
 
 app.get('/api/agent-config/roles', (c) => c.json(listAgentRoles({
   domainId: c.req.query('domainId') || undefined,
-  includeInactive: true,
+  includeInactive: false,
 })));
 
 app.post('/api/agent-config/roles', async (c) => {
@@ -335,7 +335,7 @@ app.delete('/api/agent-config/roles/:id', (c) => {
 app.get('/api/agent-config/work-groups', (c) => c.json(listAgentWorkGroups({
   domainId: c.req.query('domainId') || undefined,
   roleId: c.req.query('roleId') || undefined,
-  includeInactive: true,
+  includeInactive: false,
 })));
 
 app.post('/api/agent-config/work-groups', async (c) => {
@@ -362,7 +362,7 @@ app.get('/api/agent-config/work-items', (c) => c.json(listAgentWorkItems({
   domainId: c.req.query('domainId') || undefined,
   roleId: c.req.query('roleId') || undefined,
   groupId: c.req.query('groupId') || undefined,
-  includeInactive: true,
+  includeInactive: false,
 })));
 
 app.post('/api/agent-config/work-items', async (c) => {

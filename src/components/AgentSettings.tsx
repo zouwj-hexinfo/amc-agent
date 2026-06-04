@@ -9,7 +9,7 @@ import {
   AgentWorkItemDefinition,
   KnowledgeItem,
 } from "../types";
-import { BarChart3, BookOpen, Bot, ChevronRight, Edit3, FileText, GripVertical, Plus, PlusCircle, RefreshCw, Scale, ShieldCheck, Sparkles, TrendingUp, Wand2 } from "lucide-react";
+import { BarChart3, BookOpen, Bot, ChevronRight, Edit3, FileText, GripVertical, Plus, PlusCircle, RefreshCw, Scale, ShieldCheck, Sparkles, Trash2, TrendingUp, Wand2 } from "lucide-react";
 
 interface AgentSettingsProps {
   bundle: AgentConfigBundle;
@@ -107,7 +107,7 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
     if (selectedWorkItem && selectedWorkItem.id !== selectedWorkItemId) setSelectedWorkItemId(selectedWorkItem.id);
     setWorkItemDraft(selectedWorkItem || null);
     setGenerationPreview(null);
-  }, [selectedWorkItem?.id, selectedWorkItemId]);
+  }, [selectedWorkItem?.id, selectedWorkItem?.status, selectedWorkItemId]);
 
   const apiSave = async (path: string, method: "POST" | "PUT" | "DELETE", body?: unknown) => {
     const response = await fetch(path, {
@@ -149,6 +149,29 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
       defaultTemperature: 0.15,
       status: "active",
     });
+  };
+
+  const editRole = async (role: AgentRole) => {
+    const nextName = window.prompt("请修改岗位专家名称", role.name);
+    if (nextName === null) return;
+    const trimmedName = nextName.trim();
+    if (!trimmedName) {
+      setMessage("岗位名称不能为空");
+      window.setTimeout(() => setMessage(null), 1800);
+      return;
+    }
+    const nextRole = window.prompt("请修改岗位职责描述", role.role) ?? role.role;
+    await apiSave(`/api/agent-config/roles/${encodeURIComponent(role.id)}`, "PUT", {
+      ...role,
+      name: trimmedName,
+      role: nextRole,
+    });
+  };
+
+  const deleteRole = async (role: AgentRole) => {
+    if (!window.confirm(`确定要删除岗位专家「${role.name}」吗?该操作不可撤销。`)) return;
+    await apiSave(`/api/agent-config/roles/${encodeURIComponent(role.id)}`, "DELETE");
+    if (selectedRoleId === role.id) setSelectedRoleId("");
   };
 
   const openGroupCreate = () => {
@@ -329,8 +352,8 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
         <div className="shrink-0 overflow-hidden" style={{ width: leftPaneWidth }}>
           <Panel title="产品领域 / 岗位专家" action={addDomain} actionTitle="新增产品领域">
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-3xs">
-            {bundle.domains.map((domain, index) => {
-              const domainRoles = bundle.roles.filter(role => role.domainId === domain.id);
+            {bundle.domains.filter(domain => domain.status !== "inactive").map((domain, index) => {
+              const domainRoles = bundle.roles.filter(role => role.domainId === domain.id && role.status !== "inactive");
               const isCurrentDomain = domain.id === selectedDomain?.id;
               const isExpanded = expandedDomainIds.has(domain.id);
 
@@ -381,22 +404,49 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
                       {domainRoles.map(role => {
                         const isCurrentRole = role.id === selectedRole?.id;
                         return (
-                          <button
+                          <div
                             key={role.id}
-                            onClick={() => {
-                              setSelectedDomainId(domain.id);
-                              setSelectedRoleId(role.id);
-                            }}
-                            className={`w-full rounded-xl px-3 py-2 text-left transition-all ${isCurrentRole ? `bg-white text-${brand}-900 shadow-3xs ring-1 ring-${brand}-200` : "text-slate-600 hover:bg-white/80"} ${role.status === "inactive" ? "opacity-50" : ""}`}
+                            className={`group relative w-full rounded-xl transition-all ${isCurrentRole ? `bg-white text-${brand}-900 shadow-3xs ring-1 ring-${brand}-200` : "text-slate-600 hover:bg-white/80"} ${role.status === "inactive" ? "opacity-50" : ""}`}
                           >
-                            <div className="flex items-start gap-2">
-                              <span className="mt-0.5">{roleIcon(role.agentType)}</span>
-                              <span className="min-w-0">
-                                <span className="block truncate text-[11px] font-extrabold">{role.name}</span>
-                                <span className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">{role.role}</span>
-                              </span>
-                            </div>
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedDomainId(domain.id);
+                                setSelectedRoleId(role.id);
+                              }}
+                              className="block w-full rounded-xl px-3 py-2 text-left"
+                            >
+                              <div className="flex items-start gap-2 pr-14">
+                                <span className="mt-0.5">{roleIcon(role.agentType)}</span>
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[11px] font-extrabold">{role.name}</span>
+                                  <span className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">{role.role}</span>
+                                </span>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void editRole(role);
+                              }}
+                              className="absolute right-8 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-slate-100 hover:text-indigo-600"
+                              title="编辑岗位专家"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void deleteRole(role);
+                              }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600"
+                              title="删除岗位专家"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
                         );
                       })}
                       {domainRoles.length === 0 && (
@@ -550,13 +600,14 @@ function WorkItemTabs(props: {
   onSelectWorkItem: (item: AgentWorkItem) => void;
 }) {
   const visibleItems = props.workItems.filter(item => item.groupId === props.selectedGroup?.id);
+  const visibleGroups = props.groups;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-3xs overflow-hidden">
       <div className="border-b border-slate-100 px-4 pt-3">
         <div className="flex items-end gap-2">
           <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0">
-            {props.groups.map(group => {
+            {visibleGroups.map(group => {
               const active = group.id === props.selectedGroup?.id;
               const count = props.workItems.filter(item => item.groupId === group.id).length;
               return (
@@ -564,14 +615,14 @@ function WorkItemTabs(props: {
                   key={group.id}
                   type="button"
                   onClick={() => props.onSelectGroup(group)}
-                  className={`shrink-0 rounded-t-xl border px-4 py-2 text-[11px] font-extrabold transition-all ${active ? `border-slate-200 border-b-white bg-white text-${props.brand}-800 shadow-3xs` : "border-transparent bg-slate-100/70 text-slate-500 hover:bg-slate-100"} ${group.status === "inactive" ? "opacity-50" : ""}`}
+                  className={`shrink-0 rounded-t-xl border px-4 py-2 text-[11px] font-extrabold transition-all ${active ? `border-slate-200 border-b-white bg-white text-${props.brand}-800 shadow-3xs` : "border-transparent bg-slate-100/70 text-slate-500 hover:bg-slate-100"}`}
                 >
                   <span>{group.name}</span>
                   <span className="ml-1.5 rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] text-slate-400">{count}</span>
                 </button>
               );
             })}
-            {props.groups.length === 0 && (
+            {visibleGroups.length === 0 && (
               <button type="button" onClick={props.onAddGroup} className="rounded-xl border border-dashed border-slate-250 px-4 py-2 text-[11px] font-bold text-slate-400 hover:bg-slate-50">
                 先添加工作组
               </button>
@@ -626,61 +677,89 @@ function WorkItemReadonlyOverview(props: {
   onEdit: () => void;
   onOpenAgentDefinition: () => void;
 }) {
+  const isInactive = props.item.status === "inactive";
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl bg-slate-50/70 p-3">
-        <div>
-          <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">当前工作项</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-black text-slate-900">{props.item.name}</span>
-            {props.group && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-extrabold text-slate-500">工作组：{props.group.name}</span>}
-            {props.item.status === "inactive" && <span className="rounded-full bg-rose-50 px-2 py-1 text-[10px] font-extrabold text-rose-600">已停用</span>}
+    <div className="relative">
+      <div className={`space-y-5 transition-all ${isInactive ? "pointer-events-none select-none grayscale" : ""}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl bg-slate-50/70 p-3">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">当前工作项</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-black text-slate-900">{props.item.name}</span>
+              {props.group && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-extrabold text-slate-500">工作组：{props.group.name}</span>}
+            </div>
+            {props.item.description && <p className="mt-1 text-xs font-semibold text-slate-500">{props.item.description}</p>}
           </div>
-          {props.item.description && <p className="mt-1 text-xs font-semibold text-slate-500">{props.item.description}</p>}
+          <div className="flex shrink-0 gap-2">
+            <IconButton label="编辑工作项" onClick={props.onEdit}>
+              <Edit3 className="h-4 w-4" />
+            </IconButton>
+            <IconButton label="智能体定义预览" onClick={props.onOpenAgentDefinition} variant="primary">
+              <Wand2 className="h-4 w-4" />
+            </IconButton>
+          </div>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <IconButton label="编辑工作项" onClick={props.onEdit}>
-            <Edit3 className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="智能体定义预览" onClick={props.onOpenAgentDefinition} variant="primary">
-            <Wand2 className="h-4 w-4" />
-          </IconButton>
-        </div>
+
+        <ReadOnlyBlock title="工作定义步骤">
+          {props.item.definition.workSteps.length > 0 ? (
+            <ol className="space-y-2">
+              {props.item.definition.workSteps.map((step, index) => (
+                <li key={`${step}-${index}`} className="flex gap-2 text-xs font-semibold text-slate-700">
+                  <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-${props.brand}-50 text-[10px] font-black text-${props.brand}-700`}>{index + 1}</span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <EmptyText>暂无工作定义步骤</EmptyText>
+          )}
+        </ReadOnlyBlock>
+
+        <ReadOnlyBlock title={`知识资产关联（${props.knowledgeItems.length}）`}>
+          {props.knowledgeItems.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {props.knowledgeItems.map(item => (
+                <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <div className="truncate text-[11px] font-black text-slate-800">{item.title}</div>
+                  <div className="mt-1 truncate text-[10px] font-semibold text-slate-400">{item.category} · {item.tags.slice(0, 3).join(" / ")}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyText>暂无关联知识资产</EmptyText>
+          )}
+        </ReadOnlyBlock>
+
+        <ReadOnlyBlock title="成果定义">
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs font-semibold leading-relaxed text-slate-700">{props.item.definition.outputTemplate || "暂无成果模板"}</pre>
+        </ReadOnlyBlock>
       </div>
 
-      <ReadOnlyBlock title="工作定义步骤">
-        {props.item.definition.workSteps.length > 0 ? (
-          <ol className="space-y-2">
-            {props.item.definition.workSteps.map((step, index) => (
-              <li key={`${step}-${index}`} className="flex gap-2 text-xs font-semibold text-slate-700">
-                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-${props.brand}-50 text-[10px] font-black text-${props.brand}-700`}>{index + 1}</span>
-                <span>{step}</span>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <EmptyText>暂无工作定义步骤</EmptyText>
-        )}
-      </ReadOnlyBlock>
-
-      <ReadOnlyBlock title={`知识资产关联（${props.knowledgeItems.length}）`}>
-        {props.knowledgeItems.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {props.knowledgeItems.map(item => (
-              <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                <div className="truncate text-[11px] font-black text-slate-800">{item.title}</div>
-                <div className="mt-1 truncate text-[10px] font-semibold text-slate-400">{item.category} · {item.tags.slice(0, 3).join(" / ")}</div>
-              </div>
-            ))}
+      {isInactive && (
+        <>
+          <div
+            className="pointer-events-none absolute inset-0 z-10 rounded-2xl"
+            style={{ backgroundColor: "rgba(148, 163, 184, 0.35)", backdropFilter: "blur(2px)" }}
+          />
+          <div className="pointer-events-none absolute left-3 top-3 z-20">
+            <div
+              className="rounded-md border-2 px-3 py-1 font-black tracking-widest"
+              style={{
+                fontSize: "20px",
+                transform: "translate(50px, 50px) rotate(-45deg)",
+                transformOrigin: "center",
+                background: "repeating-linear-gradient(135deg, rgba(225,29,72,0.06) 0 4px, transparent 4px 8px)",
+                borderColor: "#e11d48",
+                color: "#e11d48",
+                boxShadow: "0 0 0 2px rgba(225,29,72,0.18)",
+                textShadow: "0 1px 0 rgba(255,255,255,0.6)",
+              }}
+            >
+              尚未启用
+            </div>
           </div>
-        ) : (
-          <EmptyText>暂无关联知识资产</EmptyText>
-        )}
-      </ReadOnlyBlock>
-
-      <ReadOnlyBlock title="成果定义">
-        <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs font-semibold leading-relaxed text-slate-700">{props.item.definition.outputTemplate || "暂无成果模板"}</pre>
-      </ReadOnlyBlock>
+        </>
+      )}
     </div>
   );
 }
