@@ -36,6 +36,9 @@ export interface ProjectFile {
   parseStatus?: 'parsed' | 'failed';
   parsedText?: string;
   parseError?: string;
+  markdownS3Uri?: string;
+  markdownUploadStatus?: 'uploaded' | 'failed';
+  markdownUploadError?: string;
 }
 
 export interface ReportRevision {

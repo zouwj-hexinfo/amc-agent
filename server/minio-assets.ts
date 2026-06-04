@@ -14,6 +14,15 @@ type MinioReportAsset = {
   contentType: string;
 };
 
+type MinioUploadResult = {
+  bucket: string;
+  key: string;
+  uri: string;
+  size: number;
+};
+
+type AssetFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 const imageExtensions: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -28,7 +37,7 @@ export function parseMinioImageS3Uri(uri: string): MinioImageAsset | null {
   const key = match[2];
   const expectedBucket = process.env.MINIO_BUCKET || 'xfas';
   if (bucket !== expectedBucket) return null;
-  const keyMatch = key.match(/^(?:xfas\/)?images\/([^/]+)\/([^/]+)$/);
+  const keyMatch = key.match(/^(?:(?:xfas\/)?images|amc-images)\/([^/]+)\/([^/]+)$/);
   if (!keyMatch) return null;
   const rptId = keyMatch[1];
   const imageId = keyMatch[2];
@@ -45,7 +54,7 @@ export function parseMinioReportS3Uri(uri: string): MinioReportAsset | null {
   const key = match[2];
   const expectedBucket = process.env.MINIO_BUCKET || 'xfas';
   if (bucket !== expectedBucket) return null;
-  const keyMatch = key.match(/^(?:xfas\/)?reports\/([^/]+)\/([^/]+\.md)$/);
+  const keyMatch = key.match(/^(?:(?:xfas\/)?reports|amc-reports)\/([^/]+)\/([^/]+\.md)$/);
   if (!keyMatch) return null;
   const rptId = keyMatch[1];
   const reportId = keyMatch[2];
@@ -54,17 +63,70 @@ export function parseMinioReportS3Uri(uri: string): MinioReportAsset | null {
 }
 
 export function parseMinioImagePath(rptId: string, imageId: string) {
-  return parseMinioImageS3Uri(`s3://${process.env.MINIO_BUCKET || 'xfas'}/images/${rptId}/${imageId}`);
+  return parseMinioImageS3Uri(`s3://${process.env.MINIO_BUCKET || 'xfas'}/amc-images/${rptId}/${imageId}`);
 }
 
 export function parseMinioReportPath(rptId: string, reportId: string) {
-  return parseMinioReportS3Uri(`s3://${process.env.MINIO_BUCKET || 'xfas'}/reports/${rptId}/${reportId}`);
+  return parseMinioReportS3Uri(`s3://${process.env.MINIO_BUCKET || 'xfas'}/amc-reports/${rptId}/${reportId}`);
 }
 
 export function buildMinioImageAssetPath(uri: string) {
   const asset = parseMinioImageS3Uri(uri);
   if (!asset) return null;
   return `/api/assets/minio/images/${encodeURIComponent(asset.rptId)}/${encodeURIComponent(asset.imageId)}`;
+}
+
+export function buildMinioProjectUploadMarkdownUri(projectId: string, fileId: string) {
+  if (!isSafeAssetSegment(projectId) || !isSafeAssetSegment(fileId)) return null;
+  const bucket = process.env.MINIO_BUCKET || 'xfas';
+  return `s3://${bucket}/amc-upload/${projectId}/${fileId}.md`;
+}
+
+export async function uploadMinioProjectMarkdown(input: {
+  projectId: string;
+  fileId: string;
+  markdown: string;
+  fetcher?: AssetFetcher;
+}): Promise<MinioUploadResult> {
+  const uri = buildMinioProjectUploadMarkdownUri(input.projectId, input.fileId);
+  if (!uri) throw new Error('项目资料 Markdown 对象地址无效');
+  const config = readMinioConfig();
+  if (!config) throw new Error('MinIO 上传配置不可用');
+
+  const match = uri.match(/^s3:\/\/([^/]+)\/(.+)$/);
+  if (!match) throw new Error('项目资料 Markdown 对象地址无效');
+  const bucket = match[1];
+  const key = match[2];
+  const bytes = new TextEncoder().encode(input.markdown);
+  const endpoint = new URL(config.endpoint);
+  const pathname = `/${encodePathSegment(bucket)}/${key.split('/').map(encodePathSegment).join('/')}`;
+  const url = new URL(pathname, `${endpoint.protocol}//${endpoint.host}`);
+  const contentType = 'text/markdown;charset=utf-8';
+  const payloadHash = await sha256Hex(bytes);
+  const headers = await buildS3SignedHeaders({
+    method: 'PUT',
+    accessKey: config.accessKey,
+    secretKey: config.secretKey,
+    region: config.region,
+    host: url.host,
+    pathname: url.pathname,
+    payloadHash,
+  });
+
+  const response = await (input.fetcher || fetch)(url, {
+    method: 'PUT',
+    headers: {
+      ...headers,
+      'Content-Type': contentType,
+    },
+    body: bytes,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`项目资料 Markdown 上传失败：${response.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`);
+  }
+
+  return { bucket, key, uri, size: bytes.byteLength };
 }
 
 export async function createMinioImageAssetResponse(asset: MinioImageAsset, fetcher: typeof fetch = fetch) {
@@ -90,12 +152,14 @@ async function createMinioAssetResponse(asset: MinioImageAsset | MinioReportAsse
   const endpoint = new URL(config.endpoint);
   const pathname = `/${encodePathSegment(asset.bucket)}/${asset.key.split('/').map(encodePathSegment).join('/')}`;
   const url = new URL(pathname, `${endpoint.protocol}//${endpoint.host}`);
-  const headers = await buildS3GetHeaders({
+  const headers = await buildS3SignedHeaders({
+    method: 'GET',
     accessKey: config.accessKey,
     secretKey: config.secretKey,
     region: config.region,
     host: url.host,
     pathname: url.pathname,
+    payloadHash: 'UNSIGNED-PAYLOAD',
   });
 
   const response = await fetcher(url, { method: 'GET', headers });
@@ -123,25 +187,26 @@ function readMinioConfig() {
   return { endpoint, accessKey, secretKey, region: process.env.MINIO_REGION || 'us-east-1' };
 }
 
-async function buildS3GetHeaders(input: {
+async function buildS3SignedHeaders(input: {
+  method: 'GET' | 'PUT';
   accessKey: string;
   secretKey: string;
   region: string;
   host: string;
   pathname: string;
+  payloadHash: string;
 }) {
   const now = new Date();
   const amzDate = toAmzDate(now);
   const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = 'UNSIGNED-PAYLOAD';
   const canonicalHeaders = [
     `host:${input.host}`,
-    `x-amz-content-sha256:${payloadHash}`,
+    `x-amz-content-sha256:${input.payloadHash}`,
     `x-amz-date:${amzDate}`,
     '',
   ].join('\n');
   const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
-  const canonicalRequest = ['GET', input.pathname, '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+  const canonicalRequest = [input.method, input.pathname, '', canonicalHeaders, signedHeaders, input.payloadHash].join('\n');
   const credentialScope = `${dateStamp}/${input.region}/s3/aws4_request`;
   const stringToSign = [
     'AWS4-HMAC-SHA256',
@@ -154,7 +219,7 @@ async function buildS3GetHeaders(input: {
 
   return {
     Host: input.host,
-    'x-amz-content-sha256': payloadHash,
+    'x-amz-content-sha256': input.payloadHash,
     'x-amz-date': amzDate,
     Authorization: [
       `AWS4-HMAC-SHA256 Credential=${input.accessKey}/${credentialScope}`,
@@ -176,8 +241,9 @@ function toAmzDate(date: Date) {
   return date.toISOString().replace(/[:-]|\.\d{3}/g, '');
 }
 
-async function sha256Hex(value: string) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+async function sha256Hex(value: string | Uint8Array) {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
   return bytesToHex(new Uint8Array(digest));
 }
 

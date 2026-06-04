@@ -1,5 +1,5 @@
 import type { AnalysisEvent } from '../src/hermes/types';
-import { readMinioReportMarkdown } from './minio-assets';
+import { parseMinioReportS3Uri, readMinioReportMarkdown } from './minio-assets';
 
 type ChatRole = 'system' | 'user' | 'assistant';
 
@@ -73,17 +73,52 @@ export function hermesAutoApproveToolsEnabled() {
 
 export function buildAmcEvaluationRunInstructions() {
   return [
-    '你正在驱动一个 AMC 不良资产多 Agent 协作评估工作台，请真实处理用户的评估请求。',
-    '默认模型为 deepseek-v4-flash；如需更高质量可切换 deepseek-v4-pro，但不要在输出中暴露模型内部实现。',
-    '请围绕法律审查、风险评估、估值审核、行业分析和综合编排五类角色组织过程。',
-    '可以使用 Hermes delegate_task 拆分子任务，但不要机械并发；先完成资产收取和资料核验，再进入四维专家审查，最后由编排器生成报告。',
-    '法律审查专家关注抵押登记、首封顺位、轮候查封、工程款优先权、债权转让通知和国资处置流程。',
-    '估值审核专家关注市场法、收益法、清算折扣、空置损耗、司法处置周期、LTV 和预期回收率。',
-    '风险评估专家关注债务人信用、保证担保可执行性、市场流动性、退出触发条件和风险缓释措施。',
-    '行业分析专家关注底层行业周期、区域供需、资产流动性和可落地处置路径。',
-    '最终输出应为中文 Markdown AMC 评估报告，包含项目概览、法律、风险、估值、行业、综合评级和处置建议。',
-    '如果生成报告或图片上传到 MinIO，只在正文中使用 s3://xfas/reports/... 或 s3://xfas/images/...，不要暴露 endpoint、AccessKey、SecretKey 或临时下载链接。',
+    '你正在驱动一个地方AMC法务合规审查工作台，请真实处理用户的新业务合规审查请求。',
+    '',
+    '你是智能助手，请自主判断是否使用 delegate_task 工具拆分子任务，而不是机械地开满并发。',
+    '',
+    '可使用的并发上限是最多 3 个子任务；请根据业务合规审查的复杂度自主判断实际需要几个。',
+    '',
+    '可选角色包括：资料收集员、合规核查员、意见书撰写员；只创建本次任务真正需要的角色。',
+    '',
+    '必须按阶段编排，而不是一开始并行启动所有角色：',
+    '阶段 1 先由资料收集员从用户提供的文件（立项报告、尽职调查报告、交易合同草案等）中提取结构化的业务摘要，包含：交易类型、交易对手、标的资产、交易金额、担保结构、涉及第三方等要素，并回传结构化摘要。',
+    '',
+    '只有资料收集员回传了足够的业务摘要后，才可以启动合规核查员；合规核查员必须基于资料收集员的摘要，逐项对照审查内容清单（业务范围、交易结构、关联交易、内控、数据合规、税务、外包、监管报告等 8 项），引用具体法规条款进行逐项分析，并初步判定每项的合规等级（合规/待确认/不合规）。',
+    '',
+    '风险审计员不得早于资料收集员启动；优先在合规核查员给出各项判定结论后，再综合核查证据充分性、口径冲突、尽调报告与立项报告的信息一致性，以及潜在的系统性风险提示。若确需提前介入，只能审核资料收集员已返回的文件来源质量和信息完整性。',
+    '',
+    '意见书撰写员必须最后启动；启动前必须已经拿到资料收集、合规核查和风险审计的结构化摘要。不要在前置结果缺失时让意见书撰写员占位等待。',
+    '',
+    '不要对用户描述"并行启动资料收集员、合规核查员、风险审计员"；更友好的说法是"先完成资料梳理，再进入合规逐项核查和风险审计，最后出具合规意见书"。',
+    '',
+    '每个 delegate_task 子任务都要在 goal/context 中写清楚：项目名称、业务类型、审查阶段、所依据的法规清单、预期产出和可回传的结构化摘要。',
+    '',
+    '父任务需要汇总每个子任务的状态、核查结论、证据引用和风险提示；不要由父任务直接拼接最终合规意见书正文。',
+    '',
+    '意见书撰写员子任务必须调用 amc-debt-restructuring-evaluation skill 中的对应模板（低风险/中风险/高风险版）撰写最终合规意见书，并把其他子任务的结构化摘要、逐项合规判定和风险结论作为输入传给该 skill。',
+    '',
+    '父任务最终输出应以 amc-debt-restructuring-evaluation 返回的意见书正文为准，只做必要的用户可见整理，不要绕过意见书撰写 skill。',
+    '',
+    '如果使用工具、文件解析或中间推理，请让进度连接暴露过程；最终输出应适合直接放入合规审查工作台。',
+    '',
+    '不要在任何面向用户的输出中提及本地文件路径、临时目录、服务器路径、Markdown 文件名或"意见书已保存至"等保存提示。',
+    '',
+    '严禁输出类似"完整意见书已保存至：/tmp/xxx.md""文件已生成在 xxx 路径"等内部执行信息；如已生成意见书，请直接输出意见书正文。',
+    '',
     '如果工具、外部资源或浏览器操作需要用户授权，请通过进度事件发出 requires_action/approval.required，而不是静默等待。',
+    '',
+    '标准合规审查意见书必须包含结构化的审查结论图示：请在 amc-debt-restructuring-evaluation 中生成关键图表，并在需要生成概念图片时使用 baoyu-image-gen 或该 skill 内置图表能力。',
+    '',
+    '必须为标准合规审查报告生成 2-4 张关键图示，覆盖合规状态概览、风险结论和整改路径；不要只输出纯文本表格。',
+    '',
+    '只有当图表工具不可用时，才可以输出纯文本意见书，并必须在文档中说明"图表生成服务暂不可用"。',
+    '',
+    '意见书撰写子任务生成图表或图片后，只在报告正文中使用 Markdown 图片语法引用 s3://xfas/amc-images/{rptId}/{imageId}.png，例如 ![风险等级](s3://xfas/amc-images/{rptId}/{imageId}.png)。',
+    '',
+    '意见书撰写员生成最终 Markdown 正文后，必须把完整意见书上传到存档系统：路径格式 s3://xfas/amc-reports/{rptId}/opinion.md；父任务最终消息必须包含该文档 URI，并且不要只输出摘要。',
+    '',
+    '图示下方可用一句中文说明该图支撑的审查结论；不要输出MinIO的 endpoint、AccessKey、SecretKey、share_url 或下载链接。',
   ].join('\n');
 }
 
@@ -458,12 +493,16 @@ async function enrichCompletedRunEvent(event: AnalysisEvent): Promise<AnalysisEv
   if (!reportUri) return event;
   const markdown = await readMinioReportMarkdown(reportUri);
   const cleanMarkdown = markdown?.trim();
-  return cleanMarkdown ? { ...event, output: cleanMarkdown } : event;
+  if (!cleanMarkdown) return event;
+  const output = cleanMarkdown.includes(reportUri)
+    ? cleanMarkdown
+    : `${cleanMarkdown}\n\n---\n\n**报告存档 URI**：[${reportUri}](${reportUri})`;
+  return { ...event, output };
 }
 
 export function extractReportMarkdownS3Uri(value: string) {
-  return value.match(/s3:\/\/[^\s`，。；;、)）\]]+\/reports\/[^\s`，。；;、)）\]]+\.md/)?.[0]
-    ?? value.match(/s3:\/\/[^\s`，。；;、)）\]]+\/xfas\/reports\/[^\s`，。；;、)）\]]+\.md/)?.[0];
+  const matches = value.match(/s3:\/\/[^\s`，。；;、)）\]]+\/[^\s`，。；;、)）\]]+\.md/g) ?? [];
+  return matches.find(uri => parseMinioReportS3Uri(uri));
 }
 
 async function hermesRunRequest(operation: string, url: string, method: 'GET' | 'POST', runId: string) {

@@ -55,6 +55,7 @@ import {
   createMinioReportAssetResponse,
   parseMinioImagePath,
   parseMinioReportPath,
+  uploadMinioProjectMarkdown,
 } from './minio-assets';
 import {
   buildKnowledgeRetrievalPlan,
@@ -849,7 +850,7 @@ function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruct
     `项目说明：${project.description}`,
     `启用知识库：${activeKbs.join('、')}`,
     userInstruction ? `用户专项指令：${userInstruction}` : '',
-    project.files?.length ? `附件摘要：\n${project.files.map(file => `- ${file.name}: ${file.contentSnippet}`).join('\n')}` : '',
+    project.files?.length ? buildProjectFilesPromptBlock(project.files) : '',
     knowledgeContext,
     [
       '【知识引用规则】',
@@ -859,6 +860,20 @@ function buildAmcRunInput(project: AMCProject, activeKbs: string[], userInstruct
       '4. 如形成可复用经验，只能输出 knowledge_write_suggestion 协议块，不能声称已写入正式知识库。',
     ].join('\n'),
   ].filter(Boolean).join('\n');
+}
+
+function buildProjectFilesPromptBlock(files: ProjectFile[]) {
+  return [
+    '【项目资料文件】',
+    '以下资料已在上传时转换为 Markdown 并归档到 MinIO。Hermes Agent 可优先读取 Markdown资料URI；当前 Markdown 仅包含文件中可解析的文本和表格内容，图片内容后续处理。',
+    ...files.map(file => [
+      `- 文件：${file.name}`,
+      `  - 类型：${file.type}`,
+      `  - 解析状态：${file.parseStatus || 'unknown'}`,
+      file.markdownS3Uri ? `  - Markdown资料URI：${file.markdownS3Uri}` : `  - Markdown资料URI：未上传${file.markdownUploadError ? `（${file.markdownUploadError}）` : ''}`,
+      `  - 摘要：${(file.contentSnippet || '').slice(0, 800)}`,
+    ].join('\n')),
+  ].join('\n');
 }
 
 function normalizeKnowledgeItem(body: Partial<KnowledgeItem> & { id?: string }): KnowledgeItem | null {
@@ -905,6 +920,7 @@ async function readProjectFileUpload(req: HonoRequest, context: { uploadId: stri
     const type = String(body.type || 'Other');
     const parsed = await parseKnowledgeAttachmentFile(file);
     const parsedText = parsed.parsedText || '';
+    const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     logFileUploadDebug('project.parsed', {
       uploadId: context.uploadId,
       projectId: context.projectId,
@@ -915,8 +931,8 @@ async function readProjectFileUpload(req: HonoRequest, context: { uploadId: stri
       parsedTextExcerpt: parsed.parsedText ? excerptForLog(parsed.parsedText, fileUploadDebugFullTextEnabled() ? 1200 : 240) : undefined,
       parseError: parsed.parseError,
     });
-    return {
-      id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    const projectFile: ProjectFile = {
+      id: fileId,
       name: file.name || '未命名文档',
       size: file.size,
       type,
@@ -929,6 +945,7 @@ async function readProjectFileUpload(req: HonoRequest, context: { uploadId: stri
       parsedText: parsed.parsedText,
       parseError: parsed.parseError,
     };
+    return await archiveProjectFileMarkdown(context, projectFile);
   }
 
   const body = await req.json<Partial<ProjectFile>>();
@@ -940,7 +957,7 @@ async function readProjectFileUpload(req: HonoRequest, context: { uploadId: stri
     type: body.type || 'Other',
     contentSnippetLength: body.contentSnippet?.length || 0,
   });
-  return {
+  const projectFile: ProjectFile = {
     id: body.id || `file-${Date.now()}`,
     name: body.name || '未命名文档.txt',
     size: Number(body.size) || 2048,
@@ -952,6 +969,70 @@ async function readProjectFileUpload(req: HonoRequest, context: { uploadId: stri
     parsedText: body.parsedText,
     parseError: body.parseError,
   };
+  return await archiveProjectFileMarkdown(context, projectFile);
+}
+
+async function archiveProjectFileMarkdown(context: { uploadId: string; projectId: string }, file: ProjectFile): Promise<ProjectFile> {
+  const markdown = buildProjectFileMarkdown(context.projectId, file);
+  try {
+    const result = await uploadMinioProjectMarkdown({
+      projectId: context.projectId,
+      fileId: file.id,
+      markdown,
+    });
+    logFileUploadDebug('project.markdown-uploaded', {
+      uploadId: context.uploadId,
+      projectId: context.projectId,
+      fileId: file.id,
+      markdownS3Uri: result.uri,
+      markdownSize: result.size,
+      minioKey: result.key,
+    });
+    return {
+      ...file,
+      markdownS3Uri: result.uri,
+      markdownUploadStatus: 'uploaded',
+      markdownUploadError: undefined,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logFileUploadDebug('project.markdown-upload-failed', {
+      uploadId: context.uploadId,
+      projectId: context.projectId,
+      fileId: file.id,
+      error: message,
+    });
+    return {
+      ...file,
+      markdownUploadStatus: 'failed',
+      markdownUploadError: message,
+    };
+  }
+}
+
+function buildProjectFileMarkdown(projectId: string, file: ProjectFile) {
+  const body = file.parsedText || file.contentSnippet || '';
+  return [
+    `# ${file.name}`,
+    '',
+    '> 当前 Markdown 由项目资料上传流程自动转换，仅包含文件中可解析的文本和表格内容；文件内图片内容后续处理。',
+    '',
+    '## 文件元数据',
+    '',
+    `- 项目ID：${projectId}`,
+    `- 文件ID：${file.id}`,
+    `- 文件类型：${file.type}`,
+    `- MIME 类型：${file.mimeType || 'application/octet-stream'}`,
+    `- 文件大小：${file.size} bytes`,
+    `- 上传时间：${file.uploadedAt}`,
+    `- 解析状态：${file.parseStatus || 'unknown'}`,
+    file.parseError ? `- 解析错误：${file.parseError}` : '',
+    '',
+    '## 可读取内容',
+    '',
+    body.trim() || '未能解析出可读取文本或表格内容。',
+    '',
+  ].filter(line => line !== '').join('\n');
 }
 
 function logFileUploadDebug(stage: string, payload: Record<string, unknown>) {
@@ -986,6 +1067,9 @@ function summarizeProjectFileForLog(file: ProjectFile) {
     parsedTextLength: file.parsedText?.length || 0,
     contentSnippetLength: file.contentSnippet?.length || 0,
     parseError: file.parseError,
+    markdownS3Uri: file.markdownS3Uri,
+    markdownUploadStatus: file.markdownUploadStatus,
+    markdownUploadError: file.markdownUploadError,
   };
 }
 
