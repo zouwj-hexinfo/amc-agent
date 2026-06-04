@@ -9,7 +9,7 @@ import {
   AgentWorkItemDefinition,
   KnowledgeItem,
 } from "../types";
-import { BarChart3, BookOpen, Bot, ChevronRight, Edit3, FileText, Plus, PlusCircle, RefreshCw, Scale, ShieldCheck, Sparkles, TrendingUp, Wand2 } from "lucide-react";
+import { BarChart3, BookOpen, Bot, ChevronRight, Edit3, FileText, GripVertical, Plus, PlusCircle, RefreshCw, Scale, ShieldCheck, Sparkles, TrendingUp, Wand2 } from "lucide-react";
 
 interface AgentSettingsProps {
   bundle: AgentConfigBundle;
@@ -35,6 +35,40 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
   const [message, setMessage] = React.useState<string | null>(null);
   const [expandedDomainIds, setExpandedDomainIds] = React.useState<Set<string>>(() => new Set());
   const [drawerMode, setDrawerMode] = React.useState<ConfigDrawerMode | null>(null);
+  const [leftPaneWidth, setLeftPaneWidth] = React.useState<number>(() => {
+    if (typeof window === "undefined") return 330;
+    const stored = window.localStorage.getItem("amc.agentConfig.leftPaneWidth");
+    const parsed = stored ? Number(stored) : NaN;
+    return Number.isFinite(parsed) && parsed >= 220 && parsed <= 640 ? parsed : 330;
+  });
+  const dragStateRef = React.useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const onDragHandleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragStateRef.current = { startX: event.clientX, startWidth: leftPaneWidth };
+    const handleMove = (moveEvent: MouseEvent) => {
+      if (!dragStateRef.current) return;
+      const delta = moveEvent.clientX - dragStateRef.current.startX;
+      const next = Math.max(220, Math.min(640, dragStateRef.current.startWidth + delta));
+      setLeftPaneWidth(next);
+    };
+    const handleUp = () => {
+      dragStateRef.current = null;
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("amc.agentConfig.leftPaneWidth", String(leftPaneWidth));
+  }, [leftPaneWidth]);
 
   const brand = activeColorBrand || "indigo";
   const primaryBtn = currentTheme?.primaryBtn || "bg-indigo-600 hover:bg-indigo-700 text-white";
@@ -291,8 +325,9 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
         {message && <span className="text-[11px] font-bold text-slate-500">{message}</span>}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[330px_1fr] flex-1 min-h-[640px] divide-y xl:divide-y-0 xl:divide-x divide-slate-200 overflow-hidden">
-        <Panel title="产品领域 / 岗位专家" action={addDomain} actionTitle="新增产品领域">
+      <div className="flex flex-1 min-h-[640px] divide-y xl:divide-y-0 divide-slate-200 overflow-hidden">
+        <div className="shrink-0 overflow-hidden" style={{ width: leftPaneWidth }}>
+          <Panel title="产品领域 / 岗位专家" action={addDomain} actionTitle="新增产品领域">
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-3xs">
             {bundle.domains.map((domain, index) => {
               const domainRoles = bundle.roles.filter(role => role.domainId === domain.id);
@@ -383,8 +418,19 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
             })}
           </div>
         </Panel>
+        </div>
 
-        <div className="overflow-y-auto px-5 py-2.5 space-y-2.5 bg-white/60">
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动以调整左右区域大小"
+          onMouseDown={onDragHandleMouseDown}
+          className="group relative hidden xl:flex shrink-0 w-1.5 cursor-col-resize items-center justify-center bg-slate-200/60 hover:bg-indigo-200/80 active:bg-indigo-300 transition-colors"
+        >
+          <GripVertical className="h-4 w-4 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+        </div>
+
+        <div className="overflow-y-auto px-5 py-2.5 space-y-2.5 bg-white/60 flex-1 min-w-0">
           <CurrentConfigNav domain={selectedDomain} role={selectedRole} brand={brand} />
 
           <WorkItemTabs
