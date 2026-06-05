@@ -580,7 +580,21 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
             }}
           />
 
-          <Section title="工作项定义" icon={<FileText className="w-4 h-4" />}>
+          <Section
+            title="工作项定义"
+            icon={<FileText className="w-4 h-4" />}
+            actions={workItemDraft ? (
+              <button
+                type="button"
+                aria-label="编辑工作项"
+                title="编辑工作项"
+                onClick={openWorkItemEdit}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 opacity-0 shadow-xs transition-all hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-100 group-hover:opacity-100"
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          >
             {workItemDraft && (
               <WorkItemReadonlyOverview
                 item={workItemDraft}
@@ -588,7 +602,6 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
                 knowledgeItems={selectedKnowledgeItems}
                 brand={brand}
                 primaryBtn={primaryBtn}
-                onEdit={openWorkItemEdit}
                 onOpenAgentDefinition={openAgentDefinition}
               />
             )}
@@ -699,16 +712,18 @@ function WorkItemTabs(props: {
           <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0">
             {visibleGroups.map(group => {
               const active = group.id === props.selectedGroup?.id;
-              const count = props.workItems.filter(item => item.groupId === group.id).length;
               return (
                 <button
                   key={group.id}
                   type="button"
                   onClick={() => props.onSelectGroup(group)}
-                  className={`shrink-0 rounded-t-xl border px-4 py-2 text-[11px] font-extrabold transition-all ${active ? `border-slate-200 border-b-white bg-white text-${props.brand}-800 shadow-3xs` : "border-transparent bg-slate-100/70 text-slate-500 hover:bg-slate-100"}`}
+                  className={`shrink-0 rounded-t-xl border px-4 py-2 text-[11px] font-extrabold transition-all ${
+                    active
+                      ? `border-${props.brand}-300 border-b-white bg-${props.brand}-50 text-${props.brand}-900 shadow-sm ring-1 ring-${props.brand}-200/70`
+                      : "border-transparent bg-slate-100/70 text-slate-500 hover:bg-slate-100"
+                  }`}
                 >
                   <span>{group.name}</span>
-                  <span className="ml-1.5 rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] text-slate-400">{count}</span>
                 </button>
               );
             })}
@@ -770,7 +785,6 @@ function WorkItemReadonlyOverview(props: {
   knowledgeItems: KnowledgeItem[];
   brand: string;
   primaryBtn: string;
-  onEdit: () => void;
   onOpenAgentDefinition: () => void;
 }) {
   const isInactive = props.item.status === "inactive";
@@ -787,9 +801,6 @@ function WorkItemReadonlyOverview(props: {
             {props.item.description && <p className="mt-1 text-xs font-semibold text-slate-500">{props.item.description}</p>}
           </div>
           <div className="flex shrink-0 gap-2">
-            <IconButton label="编辑工作项" onClick={props.onEdit}>
-              <Edit3 className="h-4 w-4" />
-            </IconButton>
             <IconButton label="智能体定义预览" onClick={props.onOpenAgentDefinition} variant="primary">
               <Wand2 className="h-4 w-4" />
             </IconButton>
@@ -1124,12 +1135,13 @@ function ConfigDrawer(props: {
   );
 }
 
-function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, icon, actions, children }: { title: string; icon: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-3xs">
-      <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 mb-3">
+    <div className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-3xs">
+      <h4 className="mb-3 flex items-center gap-1.5 text-xs font-black text-slate-800">
         {icon}
-        {title}
+        <span>{title}</span>
+        {actions}
       </h4>
       {children}
     </div>
