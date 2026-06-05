@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import StructuredMarketView from "./StructuredMarketView";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface KnowledgeBaseViewProps {
   items: KnowledgeItem[];
@@ -142,6 +143,12 @@ export default function KnowledgeBaseView({
   const [isAdding, setIsAdding] = React.useState(false);
   const [editingItem, setEditingItem] = React.useState<KnowledgeItem | null>(null);
   const [selectedDetailItem, setSelectedDetailItem] = React.useState<KnowledgeItem | null>(null);
+  const [confirmAction, setConfirmAction] = React.useState<{
+    title: string;
+    message: string;
+    confirmText?: string;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
 
   const [marketRowsCount, setMarketRowsCount] = React.useState<number>(0);
 
@@ -356,6 +363,32 @@ export default function KnowledgeBaseView({
   };
 
   const totalItemsCount = items.filter(i => i.category !== "market").length + marketRowsCount;
+
+  const requestDeleteItem = (item: KnowledgeItem) => {
+    setConfirmAction({
+      title: "删除知识条目",
+      message: `确定删除知识条目「${item.title}」及其附件吗？`,
+      confirmText: "删除条目",
+      onConfirm: async () => {
+        await onDeleteItem(item.id);
+        if (selectedDetailItem?.id === item.id) setSelectedDetailItem(null);
+        setConfirmAction(null);
+      },
+    });
+  };
+
+  const requestDeleteAttachment = (item: KnowledgeItem, attachmentId: string, fileName: string) => {
+    setConfirmAction({
+      title: "删除知识附件",
+      message: `确定删除附件「${fileName}」吗？`,
+      confirmText: "删除附件",
+      onConfirm: async () => {
+        await onDeleteAttachment(item.id, attachmentId);
+        setSelectedDetailItem(null);
+        setConfirmAction(null);
+      },
+    });
+  };
 
   return (
     <div className="bg-slate-50/75 rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-full flex flex-col relative">
@@ -730,9 +763,7 @@ export default function KnowledgeBaseView({
                             编辑
                           </button>
                           <button
-                            onClick={async () => {
-                              if (window.confirm(`确定删除知识条目「${item.title}」及其附件吗？`)) await onDeleteItem(item.id);
-                            }}
+                            onClick={() => requestDeleteItem(item)}
                             className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-rose-50 text-rose-600 font-bold"
                           >
                             删除
@@ -890,12 +921,7 @@ export default function KnowledgeBaseView({
                             </div>
                           </div>
                           <button
-                            onClick={async () => {
-                              if (window.confirm(`确定删除附件「${attachment.fileName}」吗？`)) {
-                                await onDeleteAttachment(selectedDetailItem.id, attachment.id);
-                                setSelectedDetailItem(null);
-                              }
-                            }}
+                            onClick={() => requestDeleteAttachment(selectedDetailItem, attachment.id, attachment.fileName)}
                             className="text-[10px] font-bold px-2 py-1 rounded cursor-pointer select-none flex-shrink-0 text-rose-600 bg-rose-50 hover:bg-rose-100"
                           >
                             删除附件
@@ -924,6 +950,14 @@ export default function KnowledgeBaseView({
           </>
         )}
       </AnimatePresence>
+      <ConfirmDialog
+        open={Boolean(confirmAction)}
+        title={confirmAction?.title || ""}
+        message={confirmAction?.message || ""}
+        confirmText={confirmAction?.confirmText || "确认删除"}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => void confirmAction?.onConfirm()}
+      />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   KnowledgeItem,
 } from "../types";
 import { BarChart3, BookOpen, Bot, ChevronRight, Edit3, FileText, GripVertical, Plus, PlusCircle, RefreshCw, Scale, ShieldCheck, Sparkles, Trash2, TrendingUp, Wand2 } from "lucide-react";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface AgentSettingsProps {
   bundle: AgentConfigBundle;
@@ -19,13 +20,15 @@ interface AgentSettingsProps {
   activeColorBrand?: string;
 }
 
-type ConfigDrawerMode = "group-create" | "group-edit" | "work-item-create" | "work-item-edit" | "agent-definition";
+type ConfigDrawerMode = "domain-create" | "domain-edit" | "role-create" | "role-edit" | "group-create" | "group-edit" | "work-item-create" | "work-item-edit" | "agent-definition";
 
 export default function AgentSettings({ bundle, knowledgeItems, onRefresh, currentTheme, activeColorBrand }: AgentSettingsProps) {
   const [selectedDomainId, setSelectedDomainId] = React.useState("");
   const [selectedRoleId, setSelectedRoleId] = React.useState("");
   const [selectedGroupId, setSelectedGroupId] = React.useState("");
   const [selectedWorkItemId, setSelectedWorkItemId] = React.useState("");
+  const [domainDraft, setDomainDraft] = React.useState<AgentDomain | null>(null);
+  const [roleDraft, setRoleDraft] = React.useState<AgentRole | null>(null);
   const [groupDraft, setGroupDraft] = React.useState<AgentWorkGroup | null>(null);
   const [workItemDraft, setWorkItemDraft] = React.useState<AgentWorkItem | null>(null);
   const [knowledgeQuery, setKnowledgeQuery] = React.useState("");
@@ -33,6 +36,12 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
   const [generationPreview, setGenerationPreview] = React.useState<AgentWorkItemDefinition | null>(null);
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = React.useState<{
+    title: string;
+    message: string;
+    confirmText?: string;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
   const [expandedDomainIds, setExpandedDomainIds] = React.useState<Set<string>>(() => new Set());
   const [drawerMode, setDrawerMode] = React.useState<ConfigDrawerMode | null>(null);
   const [leftPaneWidth, setLeftPaneWidth] = React.useState<number>(() => {
@@ -82,6 +91,7 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
 
   React.useEffect(() => {
     if (selectedDomain && selectedDomain.id !== selectedDomainId) setSelectedDomainId(selectedDomain.id);
+    setDomainDraft(selectedDomain || null);
   }, [selectedDomain?.id, selectedDomainId]);
 
   React.useEffect(() => {
@@ -96,6 +106,7 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
 
   React.useEffect(() => {
     if (selectedRole && selectedRole.id !== selectedRoleId) setSelectedRoleId(selectedRole.id);
+    setRoleDraft(selectedRole || null);
   }, [selectedRole?.id, selectedRoleId]);
 
   React.useEffect(() => {
@@ -124,54 +135,72 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
   };
 
   const addDomain = async () => {
-    const label = window.prompt("请输入产品领域名称", "对公不良资产收购");
-    if (!label?.trim()) return;
-    const code = window.prompt("请输入领域编码", label.trim().toUpperCase().replace(/\s+/g, "_"));
-    if (!code?.trim()) return;
-    await apiSave("/api/agent-config/domains", "POST", {
-      label: label.trim(),
-      code: code.trim(),
+    setDomainDraft({
+      id: "",
+      code: "NEW_DOMAIN",
+      label: "新产品领域",
+      description: "",
       themeColor: brand,
       fields: [],
       status: "active",
+      createdAt: "",
+      updatedAt: "",
     });
+    setDrawerMode("domain-create");
   };
 
   const addRole = async (domainId = selectedDomain?.id) => {
     if (!domainId) return;
-    const name = window.prompt("请输入岗位专家名称", "法务合规专家");
-    if (!name?.trim()) return;
-    await apiSave("/api/agent-config/roles", "POST", {
+    setRoleDraft({
+      id: "",
       domainId,
       agentType: "law_review",
-      name: name.trim(),
+      name: "新岗位专家",
       role: "请维护该岗位专家的职责描述",
       defaultTemperature: 0.15,
       status: "active",
+      createdAt: "",
+      updatedAt: "",
     });
+    setDrawerMode("role-create");
   };
 
-  const editRole = async (role: AgentRole) => {
-    const nextName = window.prompt("请修改岗位专家名称", role.name);
-    if (nextName === null) return;
-    const trimmedName = nextName.trim();
-    if (!trimmedName) {
-      setMessage("岗位名称不能为空");
-      window.setTimeout(() => setMessage(null), 1800);
-      return;
-    }
-    const nextRole = window.prompt("请修改岗位职责描述", role.role) ?? role.role;
-    await apiSave(`/api/agent-config/roles/${encodeURIComponent(role.id)}`, "PUT", {
-      ...role,
-      name: trimmedName,
-      role: nextRole,
+  const editDomain = (domain: AgentDomain) => {
+    setSelectedDomainId(domain.id);
+    setDomainDraft(domain);
+    setDrawerMode("domain-edit");
+  };
+
+  const editRole = (role: AgentRole) => {
+    setSelectedRoleId(role.id);
+    setRoleDraft(role);
+    setDrawerMode("role-edit");
+  };
+
+  const deleteDomain = async (domain: AgentDomain) => {
+    setConfirmAction({
+      title: "删除产品领域",
+      message: `确定删除产品领域「${domain.label}」吗？历史配置会以停用方式保留。`,
+      confirmText: "删除领域",
+      onConfirm: async () => {
+        await apiSave(`/api/agent-config/domains/${encodeURIComponent(domain.id)}`, "DELETE");
+        if (selectedDomainId === domain.id) setSelectedDomainId("");
+        setConfirmAction(null);
+      },
     });
   };
 
   const deleteRole = async (role: AgentRole) => {
-    if (!window.confirm(`确定要删除岗位专家「${role.name}」吗?该操作不可撤销。`)) return;
-    await apiSave(`/api/agent-config/roles/${encodeURIComponent(role.id)}`, "DELETE");
-    if (selectedRoleId === role.id) setSelectedRoleId("");
+    setConfirmAction({
+      title: "删除岗位专家",
+      message: `确定删除岗位专家「${role.name}」吗？历史配置会以停用方式保留。`,
+      confirmText: "删除专家",
+      onConfirm: async () => {
+        await apiSave(`/api/agent-config/roles/${encodeURIComponent(role.id)}`, "DELETE");
+        if (selectedRoleId === role.id) setSelectedRoleId("");
+        setConfirmAction(null);
+      },
+    });
   };
 
   const openGroupCreate = () => {
@@ -234,11 +263,31 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
     setDrawerMode("agent-definition");
   };
 
-  const closeDrawer = (next?: { group?: AgentWorkGroup | null; workItem?: AgentWorkItem | null }) => {
+  const closeDrawer = (next?: { domain?: AgentDomain | null; role?: AgentRole | null; group?: AgentWorkGroup | null; workItem?: AgentWorkItem | null }) => {
     setDrawerMode(null);
     setGenerationPreview(null);
+    setDomainDraft(next?.domain ?? selectedDomain ?? null);
+    setRoleDraft(next?.role ?? selectedRole ?? null);
     setGroupDraft(next?.group ?? selectedGroup ?? null);
     setWorkItemDraft(next?.workItem ?? selectedWorkItem ?? null);
+  };
+
+  const saveDomainDraft = async () => {
+    if (!domainDraft) return;
+    const saved = drawerMode === "domain-create"
+      ? await apiSave("/api/agent-config/domains", "POST", domainDraft)
+      : await apiSave(`/api/agent-config/domains/${encodeURIComponent(domainDraft.id)}`, "PUT", domainDraft);
+    if (saved?.id) setSelectedDomainId(saved.id);
+    closeDrawer({ domain: saved || domainDraft });
+  };
+
+  const saveRoleDraft = async () => {
+    if (!roleDraft) return;
+    const saved = drawerMode === "role-create"
+      ? await apiSave("/api/agent-config/roles", "POST", roleDraft)
+      : await apiSave(`/api/agent-config/roles/${encodeURIComponent(roleDraft.id)}`, "PUT", roleDraft);
+    if (saved?.id) setSelectedRoleId(saved.id);
+    closeDrawer({ role: saved || roleDraft });
   };
 
   const saveGroupDraft = async () => {
@@ -265,17 +314,24 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
 
   const deleteWorkItemDraft = async () => {
     if (!workItemDraft?.id || drawerMode !== "work-item-edit") return;
-    const confirmed = window.confirm(`确定删除工作项“${workItemDraft.name}”吗？历史配置会以停用方式保留。`);
-    if (!confirmed) return;
-    await apiSave(`/api/agent-config/work-items/${encodeURIComponent(workItemDraft.id)}`, "DELETE");
-    const nextItem = workItems.find(item => item.groupId === workItemDraft.groupId && item.id !== workItemDraft.id) || workItems.find(item => item.id !== workItemDraft.id) || null;
-    if (nextItem) {
-      setSelectedGroupId(nextItem.groupId);
-      setSelectedWorkItemId(nextItem.id);
-    } else {
-      setSelectedWorkItemId("");
-    }
-    closeDrawer({ workItem: nextItem });
+    const itemToDelete = workItemDraft;
+    setConfirmAction({
+      title: "删除工作项",
+      message: `确定删除工作项「${itemToDelete.name}」吗？历史配置会以停用方式保留。`,
+      confirmText: "删除工作项",
+      onConfirm: async () => {
+        await apiSave(`/api/agent-config/work-items/${encodeURIComponent(itemToDelete.id)}`, "DELETE");
+        const nextItem = workItems.find(item => item.groupId === itemToDelete.groupId && item.id !== itemToDelete.id) || workItems.find(item => item.id !== itemToDelete.id) || null;
+        if (nextItem) {
+          setSelectedGroupId(nextItem.groupId);
+          setSelectedWorkItemId(nextItem.id);
+        } else {
+          setSelectedWorkItemId("");
+        }
+        setConfirmAction(null);
+        closeDrawer({ workItem: nextItem });
+      },
+    });
   };
 
   const generateDefinition = async () => {
@@ -388,6 +444,17 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
+                        editDomain(domain);
+                      }}
+                      className="shrink-0 rounded-md p-1 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-slate-100 hover:text-indigo-600"
+                      title="编辑产品领域"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
                         setSelectedDomainId(domain.id);
                         setExpandedDomainIds(previous => new Set(previous).add(domain.id));
                         void addRole(domain.id);
@@ -396,6 +463,17 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
                       title="新增岗位专家"
                     >
                       <PlusCircle className="w-3.5 h-3.5 text-slate-500" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void deleteDomain(domain);
+                      }}
+                      className="shrink-0 rounded-md p-1 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600"
+                      title="删除产品领域"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
 
@@ -521,6 +599,8 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
           {drawerMode && (
             <ConfigDrawer
               mode={drawerMode}
+              domainDraft={domainDraft}
+              roleDraft={roleDraft}
               groupDraft={groupDraft}
               workItemDraft={workItemDraft}
               groups={groups}
@@ -531,8 +611,12 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
               isGenerating={isGenerating}
               primaryBtn={primaryBtn}
               onClose={closeDrawer}
+              onDomainChange={setDomainDraft}
+              onRoleChange={setRoleDraft}
               onGroupChange={setGroupDraft}
               onWorkItemChange={setWorkItemDraft}
+              onSaveDomain={() => void saveDomainDraft()}
+              onSaveRole={() => void saveRoleDraft()}
               onSaveGroup={() => void saveGroupDraft()}
               onSaveWorkItem={() => void saveWorkItemDraft()}
               onToggleKnowledge={toggleKnowledge}
@@ -546,6 +630,14 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
               onDeleteWorkItem={() => void deleteWorkItemDraft()}
             />
           )}
+          <ConfirmDialog
+            open={Boolean(confirmAction)}
+            title={confirmAction?.title || ""}
+            message={confirmAction?.message || ""}
+            confirmText={confirmAction?.confirmText || "确认删除"}
+            onCancel={() => setConfirmAction(null)}
+            onConfirm={() => void confirmAction?.onConfirm()}
+          />
         </div>
       </div>
     </div>
@@ -804,6 +896,8 @@ function EmptyText({ children }: { children: React.ReactNode }) {
 
 function ConfigDrawer(props: {
   mode: ConfigDrawerMode;
+  domainDraft: AgentDomain | null;
+  roleDraft: AgentRole | null;
   groupDraft: AgentWorkGroup | null;
   workItemDraft: AgentWorkItem | null;
   groups: AgentWorkGroup[];
@@ -814,8 +908,12 @@ function ConfigDrawer(props: {
   isGenerating: boolean;
   primaryBtn: string;
   onClose: () => void;
+  onDomainChange: (domain: AgentDomain | null) => void;
+  onRoleChange: (role: AgentRole | null) => void;
   onGroupChange: (group: AgentWorkGroup | null) => void;
   onWorkItemChange: (item: AgentWorkItem | null) => void;
+  onSaveDomain: () => void;
+  onSaveRole: () => void;
   onSaveGroup: () => void;
   onSaveWorkItem: () => void;
   onToggleKnowledge: (id: string) => void;
@@ -828,10 +926,16 @@ function ConfigDrawer(props: {
   onToggleWorkItemStatus: () => void;
   onDeleteWorkItem: () => void;
 }) {
+  const isDomainMode = props.mode === "domain-create" || props.mode === "domain-edit";
+  const isRoleMode = props.mode === "role-create" || props.mode === "role-edit";
   const isGroupMode = props.mode === "group-create" || props.mode === "group-edit";
-  const isCreate = props.mode === "group-create" || props.mode === "work-item-create";
-  const title = isGroupMode
-    ? (isCreate ? "创建工作组" : "编辑工作组")
+  const isCreate = props.mode === "domain-create" || props.mode === "role-create" || props.mode === "group-create" || props.mode === "work-item-create";
+  const title = isDomainMode
+    ? (isCreate ? "创建产品领域" : "编辑产品领域")
+    : isRoleMode
+      ? (isCreate ? "创建岗位专家" : "编辑岗位专家")
+      : isGroupMode
+        ? (isCreate ? "创建工作组" : "编辑工作组")
     : props.mode === "agent-definition"
       ? "智能体定义预览"
       : (isCreate ? "创建工作项" : "编辑工作项");
@@ -851,6 +955,65 @@ function ConfigDrawer(props: {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
+          {isDomainMode && props.domainDraft && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <TextField label="产品领域名称" value={props.domainDraft.label} onChange={value => props.onDomainChange({ ...props.domainDraft!, label: value })} />
+                <TextField label="领域编码" value={props.domainDraft.code} onChange={value => props.onDomainChange({ ...props.domainDraft!, code: value.toUpperCase().replace(/\s+/g, "_") })} />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <TextField label="主题色" value={props.domainDraft.themeColor} onChange={value => props.onDomainChange({ ...props.domainDraft!, themeColor: value })} />
+                <label className="space-y-1 text-[11px] font-bold text-slate-600 block">
+                  <span>状态</span>
+                  <select
+                    value={props.domainDraft.status}
+                    onChange={event => props.onDomainChange({ ...props.domainDraft!, status: event.target.value === "inactive" ? "inactive" : "active" })}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+                  >
+                    <option value="active">启用</option>
+                    <option value="inactive">停用</option>
+                  </select>
+                </label>
+              </div>
+              <DefinitionTextarea label="领域说明" value={props.domainDraft.description || ""} onChange={value => props.onDomainChange({ ...props.domainDraft!, description: value })} rows={4} />
+            </div>
+          )}
+
+          {isRoleMode && props.roleDraft && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <TextField label="岗位专家名称" value={props.roleDraft.name} onChange={value => props.onRoleChange({ ...props.roleDraft!, name: value })} />
+                <label className="space-y-1 text-[11px] font-bold text-slate-600 block">
+                  <span>智能体类型</span>
+                  <select
+                    value={props.roleDraft.agentType}
+                    onChange={event => props.onRoleChange({ ...props.roleDraft!, agentType: event.target.value as AgentType })}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+                  >
+                    <option value="law_review">法务合规</option>
+                    <option value="evaluation">项目评估</option>
+                    <option value="risk_review">风险评估</option>
+                    <option value="industry">行业分析</option>
+                    <option value="orchestrator">综合编排</option>
+                  </select>
+                </label>
+              </div>
+              <label className="space-y-1 text-[11px] font-bold text-slate-600 block">
+                <span>默认温度</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={props.roleDraft.defaultTemperature}
+                  onChange={event => props.onRoleChange({ ...props.roleDraft!, defaultTemperature: Number(event.target.value) })}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+                />
+              </label>
+              <DefinitionTextarea label="岗位职责描述" value={props.roleDraft.role} onChange={value => props.onRoleChange({ ...props.roleDraft!, role: value })} rows={5} />
+            </div>
+          )}
+
           {isGroupMode && props.groupDraft && (
             <div className="space-y-4">
               <TextField label="工作组名称" value={props.groupDraft.name} onChange={value => props.onGroupChange({ ...props.groupDraft!, name: value })} />
@@ -915,6 +1078,16 @@ function ConfigDrawer(props: {
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
           <div>
+            {isDomainMode && props.domainDraft && props.mode === "domain-edit" && (
+              <span className="rounded-lg bg-slate-200 px-3 py-2 text-[11px] font-extrabold text-slate-700">
+                {props.domainDraft.status === "inactive" ? "当前停用" : "当前启用"}
+              </span>
+            )}
+            {isRoleMode && props.roleDraft && props.mode === "role-edit" && (
+              <span className="rounded-lg bg-slate-200 px-3 py-2 text-[11px] font-extrabold text-slate-700">
+                {props.roleDraft.status === "inactive" ? "当前停用" : "当前启用"}
+              </span>
+            )}
             {isGroupMode && props.groupDraft && props.mode === "group-edit" && (
               <button type="button" onClick={props.onToggleGroupStatus} className="rounded-lg bg-slate-200 px-3 py-2 text-[11px] font-extrabold text-slate-700">
                 {props.groupDraft.status === "inactive" ? "恢复组" : "停用组"}
@@ -932,6 +1105,8 @@ function ConfigDrawer(props: {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
+            {isDomainMode && <button type="button" onClick={() => props.onSaveDomain()} className={`rounded-lg px-4 py-2 text-[11px] font-extrabold ${props.primaryBtn}`}>{isCreate ? "创建产品领域" : "保存产品领域"}</button>}
+            {isRoleMode && <button type="button" onClick={() => props.onSaveRole()} className={`rounded-lg px-4 py-2 text-[11px] font-extrabold ${props.primaryBtn}`}>{isCreate ? "创建岗位专家" : "保存岗位专家"}</button>}
             {props.mode === "agent-definition" && (
               <>
                 <button type="button" onClick={() => props.onGenerateDefinition()} disabled={props.isGenerating} className="rounded-lg bg-slate-900 px-4 py-2 text-[11px] font-extrabold text-white disabled:opacity-50">

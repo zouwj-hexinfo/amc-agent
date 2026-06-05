@@ -4,6 +4,7 @@ import {
   Search, Check, Grid, Sliders, Calendar, FolderPlus, Info, Save, X, Layers
 } from "lucide-react";
 import type { MarketField, MarketObject } from "../types";
+import ConfirmDialog from "./ConfirmDialog";
 
 export default function StructuredMarketView() {
   const [objects, setObjects] = React.useState<MarketObject[]>([]);
@@ -30,6 +31,13 @@ export default function StructuredMarketView() {
 
   // Error/Success message toast
   const [toastMsg, setToastMsg] = React.useState<{ text: string; isError: boolean } | null>(null);
+  const [confirmAction, setConfirmAction] = React.useState<{
+    title: string;
+    message: string;
+    confirmText?: string;
+    danger?: boolean;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
 
   const showToast = (text: string, isError = false) => {
     setToastMsg({ text, isError });
@@ -71,7 +79,12 @@ export default function StructuredMarketView() {
   };
 
   const handleResetToPresets = async () => {
-    if (window.confirm("确定要恢复出厂原预设的数据对象吗？此操作会重置您自定义的所有字段和元数据数据记录。")) {
+    setConfirmAction({
+      title: "恢复预设数据",
+      message: "确定要恢复出厂原预设的数据对象吗？此操作会重置您自定义的所有字段和元数据数据记录。",
+      confirmText: "恢复预设",
+      danger: false,
+      onConfirm: async () => {
       try {
         const res = await fetch("/api/knowledge/market-objects/reset", { method: "POST" });
         if (!res.ok) throw new Error("市场对象重置失败");
@@ -84,7 +97,9 @@ export default function StructuredMarketView() {
         console.error(error);
         showToast("恢复预设失败，请稍后重试。", true);
       }
-    }
+        setConfirmAction(null);
+      },
+    });
   };
 
   const activeObject = objects.find(o => o.id === selectedObjId);
@@ -251,7 +266,11 @@ export default function StructuredMarketView() {
       showToast("必须至少保留一个核心结构化业务分析对象!", true);
       return;
     }
-    if (window.confirm("极度警告：确认要永久销毁此字段的定义元数据结构模型及该类目下的所有数据记录吗？此过程不可逆。")) {
+    setConfirmAction({
+      title: "删除市场对象",
+      message: "极度警告：确认要永久销毁此字段的定义元数据结构模型及该类目下的所有数据记录吗？此过程不可逆。",
+      confirmText: "永久删除",
+      onConfirm: async () => {
       try {
         const res = await fetch(`/api/knowledge/market-objects/${encodeURIComponent(id)}`, { method: "DELETE" });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "市场对象删除失败");
@@ -264,7 +283,9 @@ export default function StructuredMarketView() {
         console.error(error);
         showToast("市场对象删除失败，请稍后重试。", true);
       }
-    }
+        setConfirmAction(null);
+      },
+    });
   };
 
   // ROW DATA ACTIONS
@@ -293,7 +314,11 @@ export default function StructuredMarketView() {
 
   const handleDeleteRow = async (rowId: string) => {
     if (!activeObject) return;
-    if (window.confirm("确定要删除这条维护的数据记录吗？")) {
+    setConfirmAction({
+      title: "删除数据记录",
+      message: "确定要删除这条维护的数据记录吗？",
+      confirmText: "删除记录",
+      onConfirm: async () => {
       try {
         await saveObjectToApi({ ...activeObject, rows: activeObject.rows.filter(r => r.id !== rowId) });
         showToast("已剔除该行指标数据。");
@@ -301,7 +326,9 @@ export default function StructuredMarketView() {
         console.error(error);
         showToast("删除行数据失败。", true);
       }
-    }
+        setConfirmAction(null);
+      },
+    });
   };
 
   const handleSaveRowSubmit = async (e: React.FormEvent) => {
@@ -934,6 +961,16 @@ export default function StructuredMarketView() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(confirmAction)}
+        title={confirmAction?.title || ""}
+        message={confirmAction?.message || ""}
+        confirmText={confirmAction?.confirmText || "确认"}
+        danger={confirmAction?.danger ?? true}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => void confirmAction?.onConfirm()}
+      />
 
     </div>
   );
