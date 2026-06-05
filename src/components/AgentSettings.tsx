@@ -627,10 +627,16 @@ function WorkItemTabs(props: {
                 先添加工作组
               </button>
             )}
+            <button
+              type="button"
+              onClick={props.onAddGroup}
+              title="新增工作组"
+              aria-label="新增工作组"
+              className={`shrink-0 rounded-t-xl border border-dashed border-slate-300 px-3 py-2 text-[11px] font-extrabold transition-all bg-slate-50/70 text-slate-400 hover:bg-slate-100 hover:text-slate-600 hover:border-slate-400`}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
           </div>
-          <IconButton label="新增工作组" onClick={props.onAddGroup}>
-            <Plus className="h-4 w-4" />
-          </IconButton>
         </div>
       </div>
 
@@ -643,7 +649,7 @@ function WorkItemTabs(props: {
                 key={item.id}
                 type="button"
                 onClick={() => props.onSelectWorkItem(item)}
-                className={`rounded-full border px-3.5 py-1.5 text-[11px] font-extrabold transition-all ${active ? `border-${props.brand}-200 bg-${props.brand}-50 text-${props.brand}-800` : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"} ${item.status === "inactive" ? "opacity-50" : ""}`}
+                className={`rounded-full border px-3.5 py-1.5 text-[11px] font-extrabold transition-all ${active ? `border-${props.brand}-200 bg-${props.brand}-50 text-${props.brand}-800` : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
               >
                 {item.name}
               </button>
