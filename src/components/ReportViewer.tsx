@@ -1,9 +1,9 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  CheckCircle2, Clock, FileText, Wand2, RefreshCw, X, AlertTriangle, FileCheck2, ShieldCheck, Activity, Gauge
+  CheckCircle2, Clock, FileText, Wand2, RefreshCw, X, AlertTriangle, FileCheck2, ShieldCheck, Activity, Gauge, MessageCircle
 } from "lucide-react";
-import { EvaluationRecord, AMCProject } from "../types";
+import { EvaluationRecord, AMCProject, ExecutionEvent, CommunicationBubble } from "../types";
 import MarkdownRenderer from "./MarkdownRenderer";
 
 const getThemeColorName = (themeObj: any): string => {
@@ -27,6 +27,157 @@ const hexMap: Record<string, { base: string; dark: string; light: string; lighte
   cyan: { base: "#0891b2", dark: "#155e75", light: "#22d3ee", lighter: "#ecfeff" },
   rose: { base: "#e11d48", dark: "#9f1239", light: "#fb7185", lighter: "#ffe4e6" },
 };
+
+function ReportDisplayTabButton({
+  active,
+  label,
+  count,
+  icon,
+  brand,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  icon: React.ReactNode;
+  brand: string;
+  onClick: () => void;
+}) {
+  const color = hexMap[brand] || hexMap.indigo;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-extrabold transition-all ${
+        active ? "text-white shadow-xs" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+      }`}
+      style={active ? { backgroundColor: color.base } : undefined}
+    >
+      {icon}
+      <span>{label}</span>
+      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-black ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-400"}`}>
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function AgentTraceTimeline({
+  events,
+  currentTheme,
+  brand,
+}: {
+  events: ExecutionEvent[];
+  currentTheme: any;
+  brand: string;
+}) {
+  const color = hexMap[brand] || hexMap.indigo;
+
+  if (events.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center shadow-2xs select-none">
+        <MessageCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+        <h4 className="text-xs font-bold text-slate-700">暂无智能体对话记录</h4>
+        <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto leading-relaxed">
+          当前项目尚未沉淀专家智能体通信流水。启动分析后，Hermes 事件会在此按时间顺序连续展示。
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
+      <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <MessageCircle className="w-4 h-4" style={{ color: color.base }} />
+          <span className="text-xs font-extrabold text-slate-800">智能体交互流水</span>
+        </div>
+        <span className="text-[10px] font-bold text-slate-400">
+          {events.length} 次执行 · {events.reduce((sum, event) => sum + event.communicationTranscripts.length, 0)} 条通信
+        </span>
+      </div>
+
+      <div className="p-5 space-y-5">
+        {events.map(event => {
+          const hasTranscripts = event.communicationTranscripts.length > 0;
+          return (
+            <section key={event.id} className="relative pl-5">
+              <span
+                className="absolute left-0 top-1.5 h-2.5 w-2.5 rounded-full ring-4 ring-white"
+                style={{ backgroundColor: event.status === 'failed' ? '#ef4444' : event.status === 'completed' ? '#10b981' : color.base }}
+              />
+              <div className="absolute left-[4px] top-5 bottom-0 w-px bg-slate-200" />
+
+              <div className="mb-3 rounded-xl border border-slate-150 bg-slate-50/60 px-3.5 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-xs font-extrabold text-slate-800 truncate">{event.actionName}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-bold text-slate-400">
+                      <span>{event.timestamp}</span>
+                      <span>{event.orchestratorMode === 'single' ? '单专家' : '多智能体会商'}</span>
+                      <span>{event.communicationTranscripts.length} 条通信</span>
+                    </div>
+                  </div>
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-black ${
+                    event.status === 'failed'
+                      ? "bg-red-50 text-red-700 border border-red-100"
+                      : event.status === 'completed'
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                        : "bg-amber-50 text-amber-700 border border-amber-100"
+                  }`}>
+                    {event.status === 'failed' ? '异常' : event.status === 'completed' ? '完成' : '进行中'}
+                  </span>
+                </div>
+              </div>
+
+              {hasTranscripts ? (
+                <div className="space-y-3">
+                  {event.communicationTranscripts.map((bubble, index) => (
+                    <React.Fragment key={`${event.id}-${index}`}>
+                      <AgentTraceBubble
+                        bubble={bubble}
+                        currentTheme={currentTheme}
+                      />
+                    </React.Fragment>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-[11px] font-semibold text-slate-400">
+                  本次执行暂无通信气泡记录。
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AgentTraceBubble({ bubble, currentTheme }: { bubble: CommunicationBubble; currentTheme: any }) {
+  let themeBg = "bg-white border-slate-150";
+  if (bubble.bubbleType === 'lawyer') themeBg = `${currentTheme?.badge || "bg-indigo-50/40 border-indigo-100/60"}`;
+  else if (bubble.bubbleType === 'valuer') themeBg = "bg-emerald-50/30 border-emerald-150/40";
+  else if (bubble.bubbleType === 'risk') themeBg = "bg-amber-50/20 border-amber-100/40";
+  else if (bubble.bubbleType === 'leader') themeBg = "bg-slate-50 border-slate-150";
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-slate-500">
+        <span>{bubble.senderAvatar} {bubble.senderName} · {bubble.senderRole}</span>
+        <span className="font-mono text-slate-400">{bubble.timestamp}</span>
+      </div>
+      <div className={`rounded-xl border p-3 text-[11px] leading-relaxed text-slate-700 shadow-3xs whitespace-pre-wrap ${themeBg}`}>
+        {bubble.content}
+      </div>
+    </div>
+  );
+}
+
+function normalizeEventTime(value: string) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 // SVG CONNECTOR LINES FOR DOCUMENT REVISIONS
 // ==========================================
@@ -249,6 +400,7 @@ interface ReportViewerProps {
   setConfirmUndoId: (id: string | null) => void;
   handleUndoRevision: (id: string, rev: any) => void;
   currentTheme: any;
+  executionEvents: ExecutionEvent[];
 }
 
 export default function ReportViewer({
@@ -276,10 +428,12 @@ export default function ReportViewer({
   confirmUndoId,
   setConfirmUndoId,
   handleUndoRevision,
-  currentTheme
+  currentTheme,
+  executionEvents
 }: ReportViewerProps) {
 
   const [showRevisionList, setShowRevisionList] = React.useState(false);
+  const [displayTab, setDisplayTab] = React.useState<'report' | 'agentTrace'>('report');
 
   const extractBrand = () => {
     const bgClass = currentTheme?.accentBg || "bg-indigo-600";
@@ -343,6 +497,10 @@ export default function ReportViewer({
 
   const activeList = currentProject.evaluations[selectedReportKey] || [];
   const activeRecord = activeList[selectedReportIndex] as EvaluationRecord | undefined;
+  const projectExecutionEvents = executionEvents
+    .filter(event => event.projectId === currentProject.id)
+    .slice()
+    .sort((a, b) => normalizeEventTime(a.timestamp) - normalizeEventTime(b.timestamp));
 
   // Recommendations for rapid inline tuning instructions
   const TUNING_TAGS = [
@@ -353,18 +511,43 @@ export default function ReportViewer({
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <div className="shrink-0 sticky top-0 z-30 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xs">
+        <ReportDisplayTabButton
+          active={displayTab === 'report'}
+          label="报告显示"
+          count={activeList.length}
+          icon={<FileText className="w-3.5 h-3.5" />}
+          brand={brand}
+          onClick={() => setDisplayTab('report')}
+        />
+        <ReportDisplayTabButton
+          active={displayTab === 'agentTrace'}
+          label="智能体对话记录"
+          count={projectExecutionEvents.reduce((count, event) => count + event.communicationTranscripts.length, 0)}
+          icon={<MessageCircle className="w-3.5 h-3.5" />}
+          brand={brand}
+          onClick={() => setDisplayTab('agentTrace')}
+        />
+      </div>
 
-      {activeList.length === 0 ? (
-        <div className="bg-white p-12 border border-slate-200 rounded-2xl text-center shadow-2xs select-none">
-          <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          <h4 className="text-xs font-bold text-slate-700">尚未生成成果草稿</h4>
-          <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
-            该目录子分类中暂无自动输出成果，请点击下方定制化意见区指令按钮、指派对应的专家智能体执行生成。
-          </p>
-        </div>
-      ) : (
-        <div id="expert-reports-grid-root" className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start relative">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        {displayTab === 'agentTrace' ? (
+          <AgentTraceTimeline
+            events={projectExecutionEvents}
+            currentTheme={currentTheme}
+            brand={brand}
+          />
+        ) : activeList.length === 0 ? (
+          <div className="bg-white p-12 border border-slate-200 rounded-2xl text-center shadow-2xs select-none">
+            <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <h4 className="text-xs font-bold text-slate-700">尚未生成成果草稿</h4>
+            <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
+              该目录子分类中暂无自动输出成果，请点击下方定制化意见区指令按钮、指派对应的专家智能体执行生成。
+            </p>
+          </div>
+        ) : (
+          <div id="expert-reports-grid-root" className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start relative">
           
           {/* Connector Wires from Markup paragraph selector to float Revisions list */}
           {showRevisionList && (
@@ -664,8 +847,9 @@ export default function ReportViewer({
             })()}
           </div>
 
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

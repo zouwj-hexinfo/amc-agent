@@ -92,6 +92,7 @@ const analysisEventHub = createAnalysisEventHub({
   appendEvent: appendAnalysisEvent,
   streamRunEvents: (runId, signal) => streamHermesRunEvents(runId, signal),
   buildFailureEvent: async (error, runId) => buildHermesRunStreamFailureEvent(error, await readHermesRunFailureSnapshot(runId)),
+  getRunSnapshot: readHermesRunFailureSnapshot,
 });
 
 app.use('*', cors());
@@ -163,14 +164,14 @@ app.get('/api/analysis/latest', (c) => {
 app.get('/api/analysis/recent', (c) => {
   const limit = Number(c.req.query('limit') ?? 6);
   return c.json({
-    records: listRecentAnalysisRecords(Number.isFinite(limit) ? limit : 6).map(analysisResponse),
+    records: listRecentAnalysisRecords(Number.isFinite(limit) ? limit : 6).map(record => analysisResponse(record)),
   });
 });
 
 app.get('/api/analysis/:id', (c) => {
   const record = getAnalysisRecord(c.req.param('id'));
   if (!record) return c.json({ message: '未找到该分析记录。' }, 404);
-  return c.json(analysisResponse(record));
+  return c.json(analysisResponse(record, { includeEvents: true }));
 });
 
 app.post('/api/analysis/:id/events', async (c) => {
@@ -190,16 +191,29 @@ app.get('/api/analysis/:id/events', (c) => {
   const afterSequence = Math.max(0, Math.floor(Number(c.req.query('after') ?? 0) || 0));
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
 
   const stream = new ReadableStream({
     start(controller) {
+      const send = (chunk: string) => {
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          unsubscribe?.();
+          if (heartbeat) clearInterval(heartbeat);
+        }
+      };
       unsubscribe = analysisEventHub.subscribe(analysisId, afterSequence, item => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(item)}\n\n`));
+        send(`data: ${JSON.stringify(item)}\n\n`);
       });
+      heartbeat = setInterval(() => {
+        send(`: heartbeat ${new Date().toISOString()}\n\n`);
+      }, 15000);
       if (record.runId) analysisEventHub.ensureWatching(analysisId);
     },
     cancel() {
       unsubscribe?.();
+      if (heartbeat) clearInterval(heartbeat);
     },
   });
 
@@ -973,7 +987,7 @@ app.use('/assets/*', serveStatic({ root: './dist' }));
 app.use('/favicon.ico', serveStatic({ root: './dist' }));
 app.get('*', serveStatic({ path: './dist/index.html' }));
 
-function analysisResponse(record: NonNullable<ReturnType<typeof getAnalysisRecord>>) {
+function analysisResponse(record: NonNullable<ReturnType<typeof getAnalysisRecord>>, options: { includeEvents?: boolean } = {}) {
   return {
     analysisId: record.analysisId,
     prompt: record.prompt,
@@ -986,6 +1000,9 @@ function analysisResponse(record: NonNullable<ReturnType<typeof getAnalysisRecor
     metadata: record.metadata,
     updatedAt: record.updatedAt,
     report: record.report,
+    ...(options.includeEvents
+      ? { events: record.events.map((event, index) => ({ sequence: index + 1, event })) }
+      : {}),
   };
 }
 
@@ -1615,13 +1632,14 @@ function numberFromFields(body: Partial<AMCProject>, fields: Record<string, unkn
   return 0;
 }
 
-type HermesRunFailureSnapshot = { status: string; lastEvent?: string };
+type HermesRunFailureSnapshot = { status: string; output?: unknown; lastEvent?: string };
 
 async function readHermesRunFailureSnapshot(runId: string): Promise<HermesRunFailureSnapshot | null> {
   try {
     const run = await getHermesRun(runId);
     return {
       status: run.status,
+      output: run.output,
       lastEvent: typeof run.last_event === 'string' ? run.last_event : undefined,
     };
   } catch {
@@ -1631,10 +1649,17 @@ async function readHermesRunFailureSnapshot(runId: string): Promise<HermesRunFai
 
 function buildHermesRunStreamFailureEvent(error: unknown, snapshot: HermesRunFailureSnapshot | null): HermesEvent {
   const errorMessage = error instanceof Error ? error.message : '未知错误';
-  if (snapshot && /^(queued|running|in_progress|requires_action)$/i.test(snapshot.status) && /Hermes run event stream failed with 404/i.test(errorMessage)) {
+  if (snapshot && /^requires_action$/i.test(snapshot.status) && /Hermes run event stream failed with 404/i.test(errorMessage)) {
     return {
-      type: 'analysis.stream_interrupted',
-      message: '分析进度连接暂时无法续订，当前过程已保留。可以稍后恢复或重新运行。',
+      type: 'analysis.requires_action',
+      message: 'Hermes Agent 需要人工授权后继续。',
+    };
+  }
+  if (snapshot && /^(queued|running|in_progress)$/i.test(snapshot.status) && /Hermes run event stream failed with 404/i.test(errorMessage)) {
+    return {
+      type: 'hermes.tool.progress',
+      toolName: 'Hermes 事件流',
+      label: '分析进度连接暂时无法续订，当前过程已保留并将继续尝试恢复。',
     };
   }
   return {

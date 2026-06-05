@@ -678,6 +678,7 @@ export default function App() {
     runId?: string;
     runStatus?: string;
     eventCount?: number;
+    events?: Array<{ sequence?: number; event?: any }>;
     updatedAt?: string;
     prompt?: { request?: string };
     metadata?: {
@@ -911,6 +912,10 @@ export default function App() {
             const existingIds = new Set(prev.map(event => event.id));
             return [...restoredEvents.filter(event => !existingIds.has(event.id)), ...prev];
           });
+          restoredEvents.forEach(event => {
+            const analysisId = event.id.replace(/^analysis-/, "");
+            void hydrateExecutionEventHistory(analysisId, event.id);
+          });
         }
 
         const runningRecords = (analysisData.records || []).filter(record =>
@@ -1084,9 +1089,7 @@ export default function App() {
     }
   };
 
-  const isTerminalAnalysisEvent = (eventType: string) => {
-    return ['analysis.completed', 'analysis.failed', 'analysis.requires_action', 'analysis.stream_interrupted'].includes(eventType);
-  };
+  const isRunningAnalysisStatus = (status?: string) => /^(queued|running|in_progress)$/i.test(status || '');
 
   const bubbleForHermesEvent = (event: any): CommunicationBubble | null => {
     const now = "刚刚";
@@ -1099,8 +1102,12 @@ export default function App() {
         return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "专家智能体", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.action || "开始执行专家审查任务。", bubbleType: hermesAgentBubbleType(event.agentId) };
       case 'agent.progress':
         return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "专家智能体", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: `${event.action || "正在处理"}${event.snippet ? `：${event.snippet}` : ''}`, bubbleType: hermesAgentBubbleType(event.agentId) };
+      case 'hermes.output.delta':
+        return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "报告流式输出", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.text || "正在生成报告正文。", bubbleType: hermesAgentBubbleType(event.agentId) };
       case 'hermes.tool.progress':
         return { senderName: "Hermes 工具执行器", senderRole: event.toolName || "Tool", senderAvatar: "T", timestamp: now, content: event.label || "工具调用完成。", bubbleType: 'leader' };
+      case 'artifact.created':
+        return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "成果产物", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.label || "Hermes 已生成阶段性产物。", bubbleType: hermesAgentBubbleType(event.agentId) };
       case 'amc.report.generated':
         return { senderName: "评估编排器", senderRole: "报告生成", senderAvatar: "编", timestamp: now, content: "Hermes 已产出最终报告正文，正在写入项目成果目录。", bubbleType: 'leader' };
       case 'analysis.completed':
@@ -1115,39 +1122,78 @@ export default function App() {
     }
   };
 
+  const mergeCommunicationBubble = (items: CommunicationBubble[], event: any, bubble: CommunicationBubble) => {
+    if (event.type !== 'hermes.output.delta') return [...items, bubble];
+    const last = items[items.length - 1];
+    if (!last || last.senderName !== bubble.senderName || last.senderRole !== bubble.senderRole) return [...items, bubble];
+    const mergedContent = `${last.content}${bubble.content}`.slice(-5000);
+    return [
+      ...items.slice(0, -1),
+      {
+        ...last,
+        timestamp: bubble.timestamp,
+        content: mergedContent.length >= 5000 ? `...${mergedContent}` : mergedContent,
+      },
+    ];
+  };
+
+  const applyHermesEventToExecutionEvent = (evt: ExecutionEvent, event: any): ExecutionEvent => {
+    const bubble = bubbleForHermesEvent(event);
+    const stepPatch = evt.steps.map(step => {
+      if (event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted') {
+        return step.status === 'active' ? { ...step, status: 'pending' as const } : step;
+      }
+      if (event.type === 'plan.created' || event.type === 'agent.started' || event.type === 'agent.progress' || event.type === 'hermes.tool.progress' || event.type === 'hermes.output.delta' || event.type === 'artifact.created') {
+        if (step.step === '3') return { ...step, status: 'active' as const };
+        return step.step === '1' || step.step === '2' ? { ...step, status: 'completed' as const } : step;
+      }
+      if (event.type === 'hermes.run.completed' || event.type === 'amc.report.generated') {
+        return step.step === '5'
+          ? { ...step, status: 'active' as const }
+          : { ...step, status: 'completed' as const };
+      }
+      if (event.type === 'analysis.completed') {
+        return { ...step, status: 'completed' as const };
+      }
+      return step;
+    });
+
+    return {
+      ...evt,
+      status: event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted'
+        ? 'failed'
+        : event.type === 'analysis.completed'
+          ? 'completed'
+          : 'active',
+      steps: stepPatch,
+      communicationTranscripts: bubble ? mergeCommunicationBubble(evt.communicationTranscripts, event, bubble) : evt.communicationTranscripts,
+    };
+  };
+
   const updateExecutionFromHermesEvent = (eventId: string, event: any) => {
-    setExecutionEvents(prev => prev.map(evt => {
-      if (evt.id !== eventId) return evt;
-      const bubble = bubbleForHermesEvent(event);
-      const stepPatch = evt.steps.map(step => {
-        if (event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted') {
-          return step.status === 'active' ? { ...step, status: 'pending' as const } : step;
-        }
-        if (event.type === 'plan.created' || event.type === 'agent.started' || event.type === 'agent.progress' || event.type === 'hermes.tool.progress') {
-          if (step.step === '3') return { ...step, status: 'active' as const };
-          return step.step === '1' || step.step === '2' ? { ...step, status: 'completed' as const } : step;
-        }
-        if (event.type === 'hermes.run.completed' || event.type === 'amc.report.generated') {
-          return step.step === '5'
-            ? { ...step, status: 'active' as const }
-            : { ...step, status: 'completed' as const };
-        }
-        if (event.type === 'analysis.completed') {
-          return { ...step, status: 'completed' as const };
-        }
-        return step;
-      });
-      return {
-        ...evt,
-        status: event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted'
-          ? 'failed'
-          : event.type === 'analysis.completed'
-            ? 'completed'
-            : 'active',
-        steps: stepPatch,
-        communicationTranscripts: bubble ? [...evt.communicationTranscripts, bubble].slice(-20) : evt.communicationTranscripts,
-      };
-    }));
+    setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? applyHermesEventToExecutionEvent(evt, event) : evt));
+  };
+
+  const hydrateExecutionEventHistory = async (analysisId: string, eventId: string) => {
+    try {
+      const response = await fetch(`/api/analysis/${encodeURIComponent(analysisId)}`);
+      if (!response.ok) return;
+      const data = await response.json() as AnalysisSummary;
+      const events = (data.events || [])
+        .filter(item => item.event)
+        .sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0))
+        .map(item => item.event);
+      if (!events.length) return;
+      setExecutionEvents(prev => prev.map(evt => {
+        if (evt.id !== eventId) return evt;
+        return events.reduce((next, event) => applyHermesEventToExecutionEvent(next, event), {
+          ...evt,
+          communicationTranscripts: [],
+        });
+      }));
+    } catch (error) {
+      console.error("Hydrate Hermes event history failed:", error);
+    }
   };
 
   const hermesAgentDisplayName = (agentId?: string) => {
@@ -1178,64 +1224,112 @@ export default function App() {
     subscribedAnalysisIdsRef.current.add(analysisId);
     let afterSequence = 0;
     let closed = false;
-    const source = new EventSource(`/api/analysis/${encodeURIComponent(analysisId)}/events?after=0`);
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let source: EventSource | undefined;
 
-    source.onmessage = async (message) => {
+    const connect = () => {
       if (closed) return;
-      try {
-        const payload = JSON.parse(message.data) as { sequence?: number; event?: any };
-        if (payload.sequence !== undefined) afterSequence = Math.max(afterSequence, payload.sequence);
-        const event = payload.event || payload;
-        updateExecutionFromHermesEvent(eventId, event);
-        if (event.type === 'analysis.completed') {
-          closed = true;
-          subscribedAnalysisIdsRef.current.delete(analysisId);
-          source.close();
-          const projRes = await fetch("/api/projects");
-          const list: AMCProject[] = await projRes.json();
-          setProjects(list);
-          setEvalSuccessMessage("✔ 真实 Hermes 多Agent事件流已完成，报告已写入成果目录。");
-          setInstructionText("");
-          setActiveTab('workspace');
-          setWorkspaceSubTab('outcome');
-          setSelectedReportKey(targetAgentKey);
-          setSelectedReportIndex(0);
-          setIsEvaluating(false);
+      source = new EventSource(`/api/analysis/${encodeURIComponent(analysisId)}/events?after=${afterSequence}`);
+
+      source.onmessage = async (message) => {
+        if (closed) return;
+        try {
+          const payload = JSON.parse(message.data) as { sequence?: number; event?: any };
+          if (payload.sequence !== undefined) afterSequence = Math.max(afterSequence, payload.sequence);
+          const event = payload.event || payload;
+          updateExecutionFromHermesEvent(eventId, event);
+          if (event.type === 'analysis.completed') {
+            closed = true;
+            subscribedAnalysisIdsRef.current.delete(analysisId);
+            source?.close();
+            const projRes = await fetch("/api/projects");
+            const list: AMCProject[] = await projRes.json();
+            setProjects(list);
+            setEvalSuccessMessage("✔ 真实 Hermes 多Agent事件流已完成，报告已写入成果目录。");
+            setInstructionText("");
+            setActiveTab('workspace');
+            setWorkspaceSubTab('outcome');
+            setSelectedReportKey(targetAgentKey);
+            setSelectedReportIndex(0);
+            setIsEvaluating(false);
+          }
+          if (event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted') {
+            closed = true;
+            subscribedAnalysisIdsRef.current.delete(analysisId);
+            source?.close();
+            setEvalSuccessMessage(null);
+            addToast(event.message || "Hermes Agent 执行失败，未生成本地模拟报告。", "error");
+            setIsEvaluating(false);
+          }
+          if (event.type === 'analysis.requires_action') {
+            closed = true;
+            subscribedAnalysisIdsRef.current.delete(analysisId);
+            source?.close();
+            addToast(event.message || "Hermes Agent 需要人工授权后继续。", "info");
+            setIsEvaluating(false);
+          }
+        } catch (error) {
+          console.error("Hermes SSE parse failed:", error);
         }
-        if (event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted') {
-          closed = true;
-          subscribedAnalysisIdsRef.current.delete(analysisId);
-          source.close();
-          setEvalSuccessMessage(null);
-          addToast(event.message || "Hermes Agent 执行失败，未生成本地模拟报告。", "error");
-          setIsEvaluating(false);
+      };
+
+      source.onerror = async () => {
+        if (closed) return;
+        source?.close();
+        try {
+          const response = await fetch(`/api/analysis/${encodeURIComponent(analysisId)}`);
+          const data = response.ok ? await response.json() as AnalysisSummary : null;
+          if (data?.events?.length) {
+            await hydrateExecutionEventHistory(analysisId, eventId);
+            afterSequence = Math.max(afterSequence, ...data.events.map(item => Number(item.sequence || 0)));
+          }
+          if (response.ok && data?.runStatus === 'completed') {
+            closed = true;
+            subscribedAnalysisIdsRef.current.delete(analysisId);
+            setExecutionEvents(prev => prev.map(evt => evt.id === eventId
+              ? { ...evt, status: 'completed', steps: evt.steps.map(step => ({ ...step, status: 'completed' as const })) }
+              : evt));
+            const projRes = await fetch("/api/projects");
+            const list: AMCProject[] = await projRes.json();
+            setProjects(list);
+            setEvalSuccessMessage("✔ 真实 Hermes 多Agent事件流已完成，报告已写入成果目录。");
+            setInstructionText("");
+            setActiveTab('workspace');
+            setWorkspaceSubTab('outcome');
+            setSelectedReportKey(targetAgentKey);
+            setSelectedReportIndex(0);
+            setIsEvaluating(false);
+            return;
+          }
+          if (response.ok && data?.runStatus === 'requires_action') {
+            closed = true;
+            subscribedAnalysisIdsRef.current.delete(analysisId);
+            addToast("Hermes Agent 需要人工授权后继续。", "info");
+            setIsEvaluating(false);
+            return;
+          }
+          if (response.ok && isRunningAnalysisStatus(data?.runStatus)) {
+            reconnectTimer = setTimeout(connect, 1500);
+            return;
+          }
+        } catch (error) {
+          console.error("Hermes SSE reconnect check failed:", error);
         }
-        if (event.type === 'analysis.requires_action') {
-          closed = true;
-          subscribedAnalysisIdsRef.current.delete(analysisId);
-          source.close();
-          addToast(event.message || "Hermes Agent 需要人工授权后继续。", "info");
-          setIsEvaluating(false);
-        }
-      } catch (error) {
-        console.error("Hermes SSE parse failed:", error);
-      }
+        closed = true;
+        subscribedAnalysisIdsRef.current.delete(analysisId);
+        setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? { ...evt, status: 'failed' } : evt));
+        addToast(`Hermes 事件流连接中断，请稍后从 analysis ${analysisId} 恢复。已接收序号：${afterSequence}`, "error");
+        setIsEvaluating(false);
+      };
     };
 
-    source.onerror = () => {
-      if (closed) return;
-      closed = true;
-      subscribedAnalysisIdsRef.current.delete(analysisId);
-      source.close();
-      setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? { ...evt, status: 'failed' } : evt));
-      addToast(`Hermes 事件流连接中断，请稍后从 analysis ${analysisId} 恢复。已接收序号：${afterSequence}`, "error");
-      setIsEvaluating(false);
-    };
+    connect();
 
     return () => {
       closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       subscribedAnalysisIdsRef.current.delete(analysisId);
-      source.close();
+      source?.close();
     };
   };
 
@@ -1831,7 +1925,7 @@ ${selectedTextStr}
         {/* WORKSPACE & DETAILS workspace */}
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Active Tab Contents Area */}
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className={currentMode === 'work' && currentProject ? "flex-1 min-h-0 overflow-hidden p-6 flex flex-col" : "flex-1 p-6 overflow-y-auto"}>
             {evalSuccessMessage && (
               <div className="mb-4 py-3.5 px-5 bg-emerald-50/60 border border-emerald-300/80 rounded-xl text-xs text-emerald-800 flex items-center justify-between shadow-3xs animate-in fade-in duration-300">
                 <div className="flex items-center gap-2">
@@ -1876,7 +1970,7 @@ ${selectedTextStr}
 
             {/* TAB 1: WORKSPACE PLATFORM */}
             {currentMode === 'work' && currentProject && (
-              <div className="space-y-6">
+              <div className="flex-1 min-h-0 flex flex-col gap-4">
                 {/* 1. MAIN OUTCOMES VIEW: Using modular ReportViewer */}
                 <ReportViewer
                   currentProject={currentProject}
@@ -1904,10 +1998,11 @@ ${selectedTextStr}
                   setConfirmUndoId={setConfirmUndoId}
                   handleUndoRevision={handleUndoRevision}
                   currentTheme={currentTheme}
+                  executionEvents={executionEvents}
                 />
 
                 {/* 2. AMC 专家意见定制化指令下达区 */}
-                <div className="bg-white p-5 border border-slate-200 rounded-2xl shadow-xs space-y-4 text-left">
+                <div className="shrink-0 bg-white p-4 border border-slate-200 rounded-2xl shadow-xs space-y-3 text-left max-h-[42vh] overflow-y-auto">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                     <div className="flex items-center gap-2">
                       <MessageSquare className={`w-4 h-4 ${currentTheme.text}`} />
