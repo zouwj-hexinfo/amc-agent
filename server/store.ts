@@ -362,7 +362,8 @@ export function upsertAgentWorkItem(item: AgentWorkItem) {
 export function deleteAgentWorkItem(id: string) {
   const item = getAgentWorkItem(id);
   if (!item) return null;
-  return upsertAgentWorkItem({ ...item, status: 'inactive', updatedAt: new Date().toISOString() });
+  database().query('delete from agent_work_items where id = ?').run(id);
+  return item;
 }
 
 export function getAgentConfigBundle(includeInactive = true): AgentConfigBundle {

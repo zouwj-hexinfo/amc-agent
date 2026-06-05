@@ -187,7 +187,8 @@ describe('agent configuration store helpers', () => {
     store.upsertAgentWorkItem(item);
     expect(store.getAgentWorkItem(item.id)?.definition.knowledgeItemIds).toContain('kn-1');
 
-    expect(store.deleteAgentWorkItem(item.id)?.status).toBe('inactive');
+    expect(store.deleteAgentWorkItem(item.id)?.id).toBe(item.id);
+    expect(store.getAgentWorkItem(item.id)).toBeNull();
     expect(store.deleteAgentWorkGroup(group.id)?.status).toBe('inactive');
     expect(store.deleteAgentRole(role.id)?.status).toBe('inactive');
     expect(store.deleteAgentDomain(domain.id)?.status).toBe('inactive');

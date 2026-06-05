@@ -317,7 +317,7 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
     const itemToDelete = workItemDraft;
     setConfirmAction({
       title: "删除工作项",
-      message: `确定删除工作项「${itemToDelete.name}」吗？历史配置会以停用方式保留。`,
+      message: `确定永久删除工作项「${itemToDelete.name}」吗？该工作项主数据记录会从数据库物理删除。`,
       confirmText: "删除工作项",
       onConfirm: async () => {
         await apiSave(`/api/agent-config/work-items/${encodeURIComponent(itemToDelete.id)}`, "DELETE");
@@ -418,20 +418,17 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
                   <div className={`group flex items-center gap-1.5 px-2 py-2.5 transition-colors ${isCurrentDomain ? `bg-${brand}-50/70` : "hover:bg-slate-50"}`}>
                     <button
                       type="button"
-                      onClick={() => toggleDomainExpansion(domain.id)}
-                      className="shrink-0 rounded-md p-1 hover:bg-white/80"
-                      title={isExpanded ? "收起领域" : "展开领域"}
-                    >
-                      <ChevronRight className={`h-3.5 w-3.5 text-slate-500 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => {
                         setSelectedDomainId(domain.id);
-                        setExpandedDomainIds(previous => new Set(previous).add(domain.id));
+                        toggleDomainExpansion(domain.id);
                       }}
-                      className="min-w-0 flex-1 text-left"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg text-left"
+                      title={isExpanded ? "点击收起领域" : "点击展开领域"}
                     >
+                      <span className="shrink-0 rounded-md p-1">
+                        <ChevronRight className={`h-3.5 w-3.5 text-slate-500 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                      </span>
+                      <span className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className={`truncate text-xs font-extrabold ${isCurrentDomain ? `text-${brand}-900` : "text-slate-850"}`}>{domain.label}</span>
                         <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-black ${domain.status === "inactive" ? "bg-slate-100 text-slate-400" : "bg-slate-100 text-slate-500"}`}>
@@ -439,6 +436,7 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
                         </span>
                       </div>
                       <div className="mt-0.5 truncate text-[10px] font-mono text-slate-400">{domain.code}</div>
+                      </span>
                     </button>
                     <button
                       type="button"

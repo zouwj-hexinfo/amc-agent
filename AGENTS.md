@@ -14,6 +14,7 @@
 
 ## 数据与主流程
 - 智能体配置主数据包括产品领域、岗位专家、工作组、工作项和智能体定义，应通过 `/api/agent-config/*` 持久化到 SQLite。
+- 工作项删除必须物理删除 `agent_work_items` 数据库记录；产品领域、岗位专家、工作组仍按停用方式保留历史。
 - 下达分析指令时，应把相关领域、岗位、工作项和 skills 传入后端，并由后端拼入 Hermes run input/instructions。
 - `analysis` 事件流是主流程状态来源；完成报告应通过 `analysis.completed` 写入项目成果目录。
 - 段落微调调用 Hermes Agent API，不使用本地规则化修订器。
