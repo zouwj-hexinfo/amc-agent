@@ -256,7 +256,7 @@ export function getAgentDomain(id: string) {
 }
 
 export function getAgentDomainByCode(code: string) {
-  return listAgentDomains(true).find(domain => domain.code === code) || null;
+  return listAgentDomains(false).find(domain => domain.code === code) || null;
 }
 
 export function upsertAgentDomain(domain: AgentDomain) {

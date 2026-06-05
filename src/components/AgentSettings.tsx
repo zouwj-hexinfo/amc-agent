@@ -392,7 +392,7 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
                         setExpandedDomainIds(previous => new Set(previous).add(domain.id));
                         void addRole(domain.id);
                       }}
-                      className="shrink-0 rounded-lg border border-slate-200 bg-white p-1.5 opacity-70 hover:opacity-100 hover:bg-slate-50"
+                      className="shrink-0 rounded-md p-1 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-slate-100 hover:text-indigo-600"
                       title="新增岗位专家"
                     >
                       <PlusCircle className="w-3.5 h-3.5 text-slate-500" />
@@ -555,10 +555,10 @@ export default function AgentSettings({ bundle, knowledgeItems, onRefresh, curre
 function Panel({ title, action, actionTitle, children }: { title: string; action: () => void; actionTitle?: string; children: React.ReactNode }) {
   return (
     <div className="px-5 py-2.5 overflow-y-auto bg-slate-50/60">
-      <div className="flex h-5 items-center justify-between mb-2">
+      <div className="group flex h-5 items-center justify-between mb-2">
         <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">{title}</span>
-        <button onClick={action} className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50" title={actionTitle || `新增${title}`}>
-          <PlusCircle className="w-4 h-4 text-slate-500" />
+        <button onClick={action} className="rounded-md p-1 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-slate-100 hover:text-indigo-600" title={actionTitle || `新增${title}`}>
+          <PlusCircle className="w-4 h-4" />
         </button>
       </div>
       <div className="space-y-2">{children}</div>
@@ -574,13 +574,13 @@ function CurrentConfigNav(props: {
   return (
     <div className="flex h-5 flex-wrap items-center gap-2 px-1 text-[11px] font-black">
       <span className="text-slate-400">当前配置</span>
-      <ChevronRight className="h-3.5 w-3.5 text-slate-300" />
-      <span className={`rounded-full bg-${props.brand}-50 px-2.5 py-1 text-${props.brand}-800`}>
-        领域：{props.domain?.label || "未选择"}
+      <span className="text-slate-300">/</span>
+      <span className="text-slate-900">
+        {props.domain?.label || "未选择"}
       </span>
-      <ChevronRight className="h-3.5 w-3.5 text-slate-300" />
-      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">
-        岗位：{props.role?.name || "未选择"}
+      <span className="text-slate-300">/</span>
+      <span className="text-slate-900">
+        {props.role?.name || "未选择"}
       </span>
     </div>
   );
