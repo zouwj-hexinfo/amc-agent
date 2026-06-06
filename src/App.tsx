@@ -2087,7 +2087,7 @@ ${selectedTextStr}
                 />
 
                 {/* 2. AMC 专家意见定制化指令下达区 */}
-                <div className="shrink-0 bg-white p-4 border border-slate-200 rounded-2xl shadow-xs space-y-3 text-left max-h-[42vh] overflow-y-auto">
+	                <div className="shrink-0 bg-white p-4 border border-slate-200 rounded-2xl shadow-xs space-y-3 text-left max-h-[42vh] overflow-visible">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                     <div className="flex items-center gap-2">
                       <MessageSquare className={`w-4 h-4 ${currentTheme.text}`} />
@@ -2096,132 +2096,125 @@ ${selectedTextStr}
                       </h4>
                     </div>
                     
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">规划指派:</span>
-                      <button
-                        onClick={() => setIsCollabConsoleOpen(!isCollabConsoleOpen)}
-                        className={`text-[10.5px] font-extrabold px-3 py-1 rounded-full border hover:bg-opacity-90 active:scale-98 transition-all flex items-center gap-1.5 shadow-3xs cursor-pointer select-none ${currentTheme.badge}`}
+	                    <div className="relative flex items-center gap-2">
+	                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">规划指派:</span>
+	                      <button
+	                        type="button"
+	                        onClick={() => setIsCollabConsoleOpen(!isCollabConsoleOpen)}
+	                        className={`text-[10.5px] font-extrabold px-3 py-1 rounded-full border hover:bg-opacity-90 active:scale-98 transition-all flex items-center gap-1.5 shadow-3xs cursor-pointer select-none ${currentTheme.badge}`}
 	                      >
 	                        {orchestratorMode === 'discuss' ? "🤖 智能规划 (按意图调用)" : 
 	                         orchestratorMode === 'single' ? `👤 指定专家 (${currentSelectedRole?.name || "法务合规岗"})` :
 	                         "⛓️ 顺序执行 (固定流程)"}
-                      </button>
-                    </div>
-                  </div>
+	                      </button>
+	                      {isCollabConsoleOpen && (
+	                        <div className="absolute right-0 bottom-full z-40 mb-2 w-[520px] max-w-[calc(100vw-3rem)] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl ring-1 ring-slate-900/5 animate-in fade-in slide-in-from-bottom-1 duration-150">
+	                          <div className="absolute -bottom-1.5 right-8 h-3 w-3 rotate-45 border-b border-r border-slate-200 bg-white" />
+	                          <div className="relative space-y-3">
+	                            <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2">
+	                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">规划指派设置</span>
+	                              <button
+	                                type="button"
+	                                onClick={() => setIsCollabConsoleOpen(false)}
+	                                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+	                                title="关闭规划指派设置"
+	                              >
+	                                <X className="h-3.5 w-3.5" />
+	                              </button>
+	                            </div>
 
-                  {isCollabConsoleOpen && (
-                    <div className="border-b border-dashed border-slate-100 pb-4 space-y-4 animate-in fade-in duration-200">
-                      {/* Step 1: Work Mode Switcher */}
-                      <div className="space-y-2 text-left">
-                        <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">① 选择规划及协同机制</label>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          {[
-                            { mode: 'discuss', label: "智能规划 (按意图调用)", desc: "根据指令意图智能推荐" },
-                            { mode: 'single', label: "指定专家 (人工指定)", desc: "指定专家执行某项任务" },
-                            { mode: 'chain', label: "顺序执行 (固定流程)", desc: "法务合规➔项目评估➔风审汇总" }
-                          ].map(w => (
-                            <button
-                              key={w.mode}
-                              onClick={() => {
-                                setOrchestratorMode(w.mode as any);
-                                if (w.mode === 'single') {
-                                  setSelectedAgent('law_review');
-                                } else {
-                                  setSelectedAgent('orchestrator');
-                                }
-                              }}
-                              className={`p-2.5 border rounded-xl text-center cursor-pointer transition-all ${
-                                orchestratorMode === w.mode
-                                  ? `${currentTheme.accentBg} border-transparent shadow-xs font-bold`
-                                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                              }`}
-                            >
-                              <div className="text-xs">{w.label}</div>
-                              <div className={`text-[8.5px] ${orchestratorMode === w.mode ? "text-white/80" : "text-slate-400"} mt-0.5 font-medium`}>{w.desc}</div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+	                            <div className="space-y-1.5 text-left">
+	                              <label className="block text-[9px] font-extrabold uppercase tracking-wider text-slate-400">规划机制</label>
+	                              <div className="grid grid-cols-3 gap-1.5">
+	                                {[
+	                                  { mode: 'discuss', label: "智能规划", desc: "按意图调用" },
+	                                  { mode: 'single', label: "指定专家", desc: "人工指定" },
+	                                  { mode: 'chain', label: "顺序执行", desc: "固定流程" }
+	                                ].map(w => (
+	                                  <button
+	                                    key={w.mode}
+	                                    type="button"
+	                                    onClick={() => {
+	                                      setOrchestratorMode(w.mode as any);
+	                                      if (w.mode === 'single') {
+	                                        setSelectedAgent('law_review');
+	                                      } else {
+	                                        setSelectedAgent('orchestrator');
+	                                      }
+	                                    }}
+	                                    className={`rounded-lg border px-2 py-2 text-center transition-all ${
+	                                      orchestratorMode === w.mode
+	                                        ? `${currentTheme.accentBg} border-transparent font-bold shadow-xs`
+	                                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+	                                    }`}
+	                                  >
+	                                    <div className="text-[11px] font-extrabold">{w.label}</div>
+	                                    <div className={`mt-0.5 text-[8px] font-semibold ${orchestratorMode === w.mode ? "text-white/80" : "text-slate-400"}`}>{w.desc}</div>
+	                                  </button>
+	                                ))}
+	                              </div>
+	                            </div>
 
-                      {/* Step 2: Target Agent Choice */}
-                      {orchestratorMode === 'single' ? (
-	                        <div className="space-y-2 text-left animate-in fade-in duration-150">
-	                          <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">② 专家选择</label>
-	                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-	                            {currentAgentRoles.map(role => {
-	                              const isSelected = selectedAgentRoleId === role.id;
-	                              return (
-	                                <button
-	                                  key={role.id}
-	                                  onClick={() => {
-	                                    setSelectedAgentRoleId(role.id);
-	                                    setSelectedAgent(role.agentType);
-	                                    const firstWorkItem = agentConfigBundle.workItems.find(item => item.roleId === role.id && item.status !== 'inactive');
-	                                    setSelectedAgentWorkItemId(firstWorkItem?.id || "");
-	                                  }}
-	                                  className={`p-2 py-2.5 text-xs font-bold rounded-lg border text-center cursor-pointer transition-all ${
-	                                    isSelected 
-	                                      ? `${currentTheme.accentBg} border-transparent shadow-3xs` 
-	                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-	                                  }`}
-	                                >
-	                                  <span>{role.name}</span>
-	                                </button>
-	                              );
-	                            })}
-	                          </div>
-	                          <div className="space-y-1.5">
-	                            <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">③ 工作项选择</label>
-	                            <select
-	                              value={currentSelectedWorkItem?.id || ""}
-	                              onChange={(e) => setSelectedAgentWorkItemId(e.target.value)}
-	                              className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-slate-700 focus:outline-none"
-	                            >
-	                              {currentRoleWorkGroups.map(group => (
-	                                <optgroup key={group.id} label={group.name}>
-	                                  {currentRoleWorkItems.filter(item => item.groupId === group.id).map(item => (
-	                                    <option key={item.id} value={item.id}>{item.name}</option>
-	                                  ))}
-	                                </optgroup>
-	                              ))}
-	                            </select>
-	                            {currentSelectedWorkItem && (
-	                              <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-	                                {currentSelectedWorkItem.description || "将按该工作项定义、知识资产和成果模板启动 Hermes Agent。"}
-	                              </p>
+	                            {orchestratorMode === 'single' ? (
+	                              <div className="space-y-1.5 text-left animate-in fade-in duration-150">
+	                                <label className="block text-[9px] font-extrabold uppercase tracking-wider text-slate-400">专家选择</label>
+	                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+	                                  {currentAgentRoles.map(role => {
+	                                    const isSelected = selectedAgentRoleId === role.id;
+	                                    return (
+	                                      <button
+	                                        key={role.id}
+	                                        type="button"
+	                                        onClick={() => {
+	                                          setSelectedAgentRoleId(role.id);
+	                                          setSelectedAgent(role.agentType);
+	                                          const firstWorkItem = agentConfigBundle.workItems.find(item => item.roleId === role.id && item.status !== 'inactive');
+	                                          setSelectedAgentWorkItemId(firstWorkItem?.id || "");
+	                                        }}
+	                                        className={`rounded-lg border px-2 py-2 text-center text-[11px] font-bold transition-all ${
+	                                          isSelected
+	                                            ? `${currentTheme.accentBg} border-transparent shadow-3xs`
+	                                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+	                                        }`}
+	                                      >
+	                                        <span className="line-clamp-1">{role.name}</span>
+	                                      </button>
+	                                    );
+	                                  })}
+	                                </div>
+	                              </div>
+	                            ) : (
+	                              <div className="space-y-1.5 text-left animate-in fade-in duration-150">
+	                                <label className="block text-[9px] font-extrabold uppercase tracking-wider text-slate-400">执行流程</label>
+	                                {orchestratorMode === 'chain' && (
+	                                  <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-150 bg-slate-50 px-2.5 py-2 text-[10px] font-semibold text-slate-600">
+	                                    <span className="rounded-md bg-indigo-50 px-2 py-1 font-extrabold text-indigo-900">法务合规</span>
+	                                    <span>→</span>
+	                                    <span className="rounded-md bg-blue-50 px-2 py-1 font-extrabold text-blue-900">项目评估</span>
+	                                    <span>→</span>
+	                                    <span className="rounded-md bg-emerald-50 px-2 py-1 font-extrabold text-emerald-900">风审汇总</span>
+	                                  </div>
+	                                )}
+	                                {orchestratorMode === 'discuss' && (
+	                                  <div className="flex items-center gap-2 rounded-lg border border-slate-150 bg-slate-50 px-2.5 py-2 text-[10.5px] font-semibold text-slate-700">
+	                                    <span className="text-sm">🔮</span>
+	                                    <span>按本次指令意图智能调度对应专家。</span>
+	                                  </div>
+	                                )}
+	                                {orchestratorMode === 'master-slave' && (
+	                                  <div className="rounded-lg border border-slate-150 bg-slate-50 px-2.5 py-2 text-[10.5px] font-semibold leading-relaxed text-slate-600">
+	                                    中枢统括派单，并联核实关键底稿与底层模型。
+	                                  </div>
+	                                )}
+	                              </div>
 	                            )}
 	                          </div>
 	                        </div>
-                      ) : (
-                        <div className="space-y-2 text-left animate-in fade-in duration-150">
-                          <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">② 执行流程</label>
-                          {orchestratorMode === 'chain' && (
-                            <div className="bg-slate-50 border border-slate-150 rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
-                              <span className="font-extrabold text-indigo-900 bg-indigo-50 px-2.5 py-1 rounded-lg">1. 法务合规专家 (审核合规性问题)</span>
-                              <span>➔</span>
-                              <span className="font-extrabold text-blue-900 bg-blue-50 px-2.5 py-1 rounded-lg">2. 项目评估专家 (估值情况分析)</span>
-                              <span>➔</span>
-                              <span className="font-extrabold text-emerald-900 bg-emerald-50 px-2.5 py-1 rounded-lg">3. 风险评估专家 (信息整合及综合判断并输出最终结果)</span>
-                            </div>
-                          )}
-                          {orchestratorMode === 'discuss' && (
-                            <div className="bg-slate-50 border border-slate-150 rounded-xl p-3.5 flex items-center gap-2.5 text-xs font-semibold text-slate-700">
-                              <span className="text-base">🔮</span>
-                              <span>根据您下达的指令的意图，智能调度对应的专家来完成相应的工作</span>
-                            </div>
-                          )}
-                          {orchestratorMode === 'master-slave' && (
-                            <div className="bg-slate-50 border border-slate-150 rounded-xl p-3 flex flex-col gap-1.5 text-xs text-slate-600">
-                              <div><span className="font-extrabold text-slate-800">中枢统括:</span> 首席规划委员自顶向下检索并派单</div>
-                              <div><span className="font-extrabold text-slate-800">并联流转:</span> 同时发起“底稿司法强执案号”与“底层折现模型”的会商核实</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+		                      )}
+		                    </div>
+		                  </div>
 
-                  <div className="space-y-3">
+	                  <div className="space-y-3">
                     <textarea
                       value={instructionText}
                       onChange={(e) => setInstructionText(e.target.value)}
