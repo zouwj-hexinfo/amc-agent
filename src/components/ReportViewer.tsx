@@ -675,7 +675,7 @@ export default function ReportViewer({
           )}
 
           {/* Sub LEFT: Versions switcher with margin to avoid floating buttons overlap */}
-          <div className="lg:col-span-2 ml-4 lg:ml-7 bg-white border border-slate-200 rounded-xl p-3.5 space-y-3 shadow-2xs text-left">
+          <div className="lg:sticky lg:top-0 lg:self-start lg:col-span-2 ml-4 lg:ml-7 bg-white border border-slate-200 rounded-xl p-3.5 space-y-3 shadow-2xs text-left">
             <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-1">
               成果版本库 (V)
             </span>
