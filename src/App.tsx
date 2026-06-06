@@ -664,6 +664,22 @@ export default function App() {
   const [isLeftFilesOpen, setIsLeftFilesOpen] = React.useState(false);
   const [isLeftExecOpen, setIsLeftExecOpen] = React.useState(false);
   const [isCollabConsoleOpen, setIsCollabConsoleOpen] = React.useState(false);
+  const collabConsoleRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!isCollabConsoleOpen || typeof document === 'undefined') return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!collabConsoleRef.current?.contains(target)) {
+        setIsCollabConsoleOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [isCollabConsoleOpen]);
 
   // Custom Toast Notifications for Sandboxed environment
   const [toasts, setToasts] = React.useState<Array<{ id: string; msg: string; type: 'success' | 'error' | 'info' }>>([]);
@@ -2096,11 +2112,11 @@ ${selectedTextStr}
                       </h4>
                     </div>
                     
-	                    <div className="relative flex items-center gap-2">
+	                    <div ref={collabConsoleRef} className="relative flex items-center gap-2">
 	                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">规划指派:</span>
 	                      <button
 	                        type="button"
-	                        onClick={() => setIsCollabConsoleOpen(!isCollabConsoleOpen)}
+	                        onClick={() => setIsCollabConsoleOpen(prev => !prev)}
 	                        className={`text-[10.5px] font-extrabold px-3 py-1 rounded-full border hover:bg-opacity-90 active:scale-98 transition-all flex items-center gap-1.5 shadow-3xs cursor-pointer select-none ${currentTheme.badge}`}
 	                      >
 	                        {orchestratorMode === 'discuss' ? "🤖 智能规划 (按意图调用)" : 
