@@ -464,6 +464,7 @@ export function ExecutionDrawer({
                       const isSelected = activeEvent?.id === evt.id;
                       const isActive = evt.status === 'active';
                       const isFailed = evt.status === 'failed';
+                      const isStopped = evt.status === 'stopped';
 
                       return (
                         <div
@@ -512,6 +513,8 @@ export function ExecutionDrawer({
                                 ? "bg-amber-50 text-amber-700 border border-amber-200 animate-pulse"
                                 : isFailed
                                 ? "bg-red-50 text-red-700 border border-red-150"
+                                : isStopped
+                                ? "bg-slate-100 text-slate-600 border border-slate-200"
                                 : "bg-emerald-50 text-emerald-700 border border-emerald-150"
                             }`}>
                               {isActive ? (
@@ -521,6 +524,8 @@ export function ExecutionDrawer({
                                 </>
                               ) : isFailed ? (
                                 <><span>✕</span><span>阻断/失败</span></>
+                              ) : isStopped ? (
+                                <><span>■</span><span>已停止</span></>
                               ) : (
                                 <><span>✓</span><span>全面审结</span></>
                               )}
@@ -567,7 +572,7 @@ export function ExecutionDrawer({
                       <h4 className="font-extrabold text-[10.5px] uppercase tracking-wider text-slate-400 border-b border-slate-150 pb-1.5 flex items-center justify-between">
                         <span>流水作业进度详情</span>
                         <span className="text-[10px] text-slate-500 font-mono">
-                          {activeEvent.status === 'completed' ? "状态：审结归口存档" : activeEvent.status === 'active' ? "状态：专家交互辩论中..." : "状态：安全挂起"}
+                          {activeEvent.status === 'completed' ? "状态：审结归口存档" : activeEvent.status === 'active' ? "状态：专家交互辩论中..." : activeEvent.status === 'stopped' ? "状态：用户已停止" : "状态：安全挂起"}
                         </span>
                       </h4>
 
@@ -655,7 +660,7 @@ export function ExecutionDrawer({
             <div className="p-3 bg-slate-100 border-t border-slate-200 flex items-center justify-between px-4 text-[10px] text-slate-500 select-none shrink-0 font-medium font-mono">
               <span>项目标识: {currentProject.id}</span>
               <span>
-                {isEvaluating ? "⏳ 多智能体协同会商并发研判管道执行中..." : "✓ 本轮委员会商研判作业已全面终审盖印存档"}
+                {isEvaluating ? "⏳ 多智能体协同会商并发研判管道执行中..." : activeEvent?.status === 'stopped' ? "■ 本轮Hermes分析已由用户停止" : "✓ 本轮委员会商研判作业已全面终审盖印存档"}
               </span>
             </div>
           </motion.div>

@@ -285,7 +285,9 @@ export interface ExecutionEvent {
   orchestratorMode: 'single' | 'chain' | 'discuss' | 'master-slave';
   agentType?: string;
   instructionText?: string;
-  status: 'completed' | 'active' | 'failed';
+  status: 'completed' | 'active' | 'failed' | 'stopped';
+  analysisId?: string;
+  runId?: string;
   steps: ExecutionStep[];
   communicationTranscripts: CommunicationBubble[];
 }

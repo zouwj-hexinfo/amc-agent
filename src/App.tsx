@@ -554,6 +554,9 @@ export default function App() {
 
   // Evaluate execution triggers
   const [isEvaluating, setIsEvaluating] = React.useState(false);
+  const [isStoppingAnalysis, setIsStoppingAnalysis] = React.useState(false);
+  const [activeAnalysisId, setActiveAnalysisId] = React.useState<string | null>(null);
+  const [activeExecutionEventId, setActiveExecutionEventId] = React.useState<string | null>(null);
   const [instructionText, setInstructionText] = React.useState("");
   const [evalSuccessMessage, setEvalSuccessMessage] = React.useState<string | null>(null);
   const subscribedAnalysisIdsRef = React.useRef<Set<string>>(new Set());
@@ -691,9 +694,10 @@ export default function App() {
   const buildExecutionEventFromAnalysis = React.useCallback((record: AnalysisSummary, project: AMCProject): ExecutionEvent => {
     const runStatus = record.runStatus || 'running';
     const isCompleted = runStatus === 'completed';
+    const isStopped = runStatus === 'cancelled' || runStatus === 'stopped';
     const isFailed = runStatus === 'failed' || runStatus === 'stream_interrupted';
     const isWaiting = runStatus === 'requires_action';
-    const status: ExecutionEvent['status'] = isCompleted ? 'completed' : isFailed ? 'failed' : 'active';
+    const status: ExecutionEvent['status'] = isCompleted ? 'completed' : isStopped ? 'stopped' : isFailed ? 'failed' : 'active';
     const targetMode = record.metadata?.orchestrationMode || 'discuss';
     const request = record.prompt?.request || 'Hermes AMC 多Agent协作评估';
     const stepStatus = (step: string): ExecutionStep['status'] => {
@@ -716,6 +720,8 @@ export default function App() {
       agentType: record.metadata?.targetAgentKey || 'orchestrator',
       instructionText: request,
       status,
+      analysisId: record.analysisId,
+      runId: record.runId,
       steps: [
         { step: "1", title: "指令解析与委员分拨对齐", desc: "已创建Hermes分析任务并保存analysis记录", status: stepStatus("1") },
         { step: "2", title: "合规审查与专家自检检索", desc: "Hermes Agent事件流已接入后端SSE通道", status: stepStatus("2") },
@@ -726,11 +732,13 @@ export default function App() {
       communicationTranscripts: [
         {
           senderName: "Hermes Agent",
-          senderRole: isCompleted ? "任务完成" : isFailed ? "任务异常" : isWaiting ? "等待授权" : "运行恢复",
-          senderAvatar: isFailed ? "!" : "H",
+          senderRole: isCompleted ? "任务完成" : isStopped ? "用户停止" : isFailed ? "任务异常" : isWaiting ? "等待授权" : "运行恢复",
+          senderAvatar: isFailed ? "!" : isStopped ? "■" : "H",
           timestamp: "刚刚",
           content: isCompleted
             ? `analysisId=${record.analysisId} 已完成，报告已进入成果目录。`
+            : isStopped
+              ? `analysisId=${record.analysisId} 已停止。`
             : isFailed
               ? `analysisId=${record.analysisId} 状态为 ${runStatus}，未生成本地模拟报告。`
               : isWaiting
@@ -929,7 +937,11 @@ export default function App() {
           const targetAgentKey = (record.metadata?.targetAgentKey || 'orchestrator') as AgentType;
           subscribeToEvaluationEvents(record.analysisId, `analysis-${record.analysisId}`, targetAgentKey);
         });
-        if (runningRecords.length) setIsEvaluating(true);
+        if (runningRecords.length) {
+          setIsEvaluating(true);
+          setActiveAnalysisId(runningRecords[0].analysisId);
+          setActiveExecutionEventId(`analysis-${runningRecords[0].analysisId}`);
+        }
       }
     } catch (e) {
       console.error("Baseline fetch failed:", e);
@@ -1090,6 +1102,7 @@ export default function App() {
   };
 
   const isRunningAnalysisStatus = (status?: string) => /^(queued|running|in_progress)$/i.test(status || '');
+  const isUserStoppedAnalysisEvent = (event: any) => event?.type === 'analysis.failed' && /用户已停止|已停止|停止Hermes/i.test(event?.message || '');
 
   const bubbleForHermesEvent = (event: any): CommunicationBubble | null => {
     const now = "刚刚";
@@ -1113,6 +1126,9 @@ export default function App() {
       case 'analysis.completed':
         return { senderName: "评估编排器", senderRole: "流程闭环", senderAvatar: "编", timestamp: now, content: "真实 Hermes 多Agent事件流已完成，成果已写入项目报告目录。", bubbleType: 'leader' };
       case 'analysis.failed':
+        if (isUserStoppedAnalysisEvent(event)) {
+          return { senderName: "Hermes Agent", senderRole: "用户停止", senderAvatar: "■", timestamp: now, content: event.message || "用户已停止 Hermes Agent 分析。", bubbleType: 'leader' };
+        }
         return { senderName: "Hermes Agent", senderRole: "运行失败", senderAvatar: "!", timestamp: now, content: event.message || "Hermes Agent 运行失败。", bubbleType: 'leader' };
       case 'analysis.stream_interrupted':
       case 'analysis.requires_action':
@@ -1123,8 +1139,11 @@ export default function App() {
   };
 
   const mergeCommunicationBubble = (items: CommunicationBubble[], event: any, bubble: CommunicationBubble) => {
-    if (event.type !== 'hermes.output.delta') return [...items, bubble];
     const last = items[items.length - 1];
+    if (event.type !== 'hermes.output.delta') {
+      if (last?.senderRole === bubble.senderRole && last.content === bubble.content) return items;
+      return [...items, bubble];
+    }
     if (!last || last.senderName !== bubble.senderName || last.senderRole !== bubble.senderRole) return [...items, bubble];
     const mergedContent = `${last.content}${bubble.content}`.slice(-5000);
     return [
@@ -1139,6 +1158,7 @@ export default function App() {
 
   const applyHermesEventToExecutionEvent = (evt: ExecutionEvent, event: any): ExecutionEvent => {
     const bubble = bubbleForHermesEvent(event);
+    const isStopped = isUserStoppedAnalysisEvent(event);
     const stepPatch = evt.steps.map(step => {
       if (event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted') {
         return step.status === 'active' ? { ...step, status: 'pending' as const } : step;
@@ -1161,7 +1181,7 @@ export default function App() {
     return {
       ...evt,
       status: event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted'
-        ? 'failed'
+        ? (isStopped ? 'stopped' : 'failed')
         : event.type === 'analysis.completed'
           ? 'completed'
           : 'active',
@@ -1252,14 +1272,19 @@ export default function App() {
             setSelectedReportKey(targetAgentKey);
             setSelectedReportIndex(0);
             setIsEvaluating(false);
+            setActiveAnalysisId(prev => prev === analysisId ? null : prev);
+            setActiveExecutionEventId(prev => prev === eventId ? null : prev);
           }
           if (event.type === 'analysis.failed' || event.type === 'analysis.stream_interrupted') {
             closed = true;
             subscribedAnalysisIdsRef.current.delete(analysisId);
             source?.close();
+            const stoppedByUser = isUserStoppedAnalysisEvent(event);
             setEvalSuccessMessage(null);
-            addToast(event.message || "Hermes Agent 执行失败，未生成本地模拟报告。", "error");
+            if (!stoppedByUser) addToast(event.message || "Hermes Agent 执行失败，未生成本地模拟报告。", "error");
             setIsEvaluating(false);
+            setActiveAnalysisId(prev => prev === analysisId ? null : prev);
+            setActiveExecutionEventId(prev => prev === eventId ? null : prev);
           }
           if (event.type === 'analysis.requires_action') {
             closed = true;
@@ -1267,6 +1292,8 @@ export default function App() {
             source?.close();
             addToast(event.message || "Hermes Agent 需要人工授权后继续。", "info");
             setIsEvaluating(false);
+            setActiveAnalysisId(prev => prev === analysisId ? null : prev);
+            setActiveExecutionEventId(prev => prev === eventId ? null : prev);
           }
         } catch (error) {
           console.error("Hermes SSE parse failed:", error);
@@ -1299,6 +1326,8 @@ export default function App() {
             setSelectedReportKey(targetAgentKey);
             setSelectedReportIndex(0);
             setIsEvaluating(false);
+            setActiveAnalysisId(prev => prev === analysisId ? null : prev);
+            setActiveExecutionEventId(prev => prev === eventId ? null : prev);
             return;
           }
           if (response.ok && data?.runStatus === 'requires_action') {
@@ -1306,6 +1335,8 @@ export default function App() {
             subscribedAnalysisIdsRef.current.delete(analysisId);
             addToast("Hermes Agent 需要人工授权后继续。", "info");
             setIsEvaluating(false);
+            setActiveAnalysisId(prev => prev === analysisId ? null : prev);
+            setActiveExecutionEventId(prev => prev === eventId ? null : prev);
             return;
           }
           if (response.ok && isRunningAnalysisStatus(data?.runStatus)) {
@@ -1320,6 +1351,8 @@ export default function App() {
         setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? { ...evt, status: 'failed' } : evt));
         addToast(`Hermes 事件流连接中断，请稍后从 analysis ${analysisId} 恢复。已接收序号：${afterSequence}`, "error");
         setIsEvaluating(false);
+        setActiveAnalysisId(prev => prev === analysisId ? null : prev);
+        setActiveExecutionEventId(prev => prev === eventId ? null : prev);
       };
     };
 
@@ -1333,9 +1366,53 @@ export default function App() {
     };
   };
 
+  const handleStopActiveAnalysis = async () => {
+    if (!activeAnalysisId || isStoppingAnalysis) return;
+    setIsStoppingAnalysis(true);
+    try {
+      const response = await fetch(`/api/analysis/${encodeURIComponent(activeAnalysisId)}/stop`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || data.error || "Hermes Agent 停止失败。");
+      }
+
+      const stoppedAnalysisId = activeAnalysisId;
+      const stoppedEventId = activeExecutionEventId;
+      subscribedAnalysisIdsRef.current.delete(stoppedAnalysisId);
+      setExecutionEvents(prev => prev.map(evt => {
+        const matches = evt.id === stoppedEventId || evt.analysisId === stoppedAnalysisId;
+        if (!matches) return evt;
+        return {
+          ...evt,
+          status: 'stopped',
+          steps: evt.steps.map(step => step.status === 'active' ? { ...step, status: 'pending' as const } : step),
+          communicationTranscripts: mergeCommunicationBubble(evt.communicationTranscripts, { type: 'analysis.failed' }, {
+            senderName: "Hermes Agent",
+            senderRole: "用户停止",
+            senderAvatar: "■",
+            timestamp: "刚刚",
+            content: "用户已停止Hermes AMC评估。",
+            bubbleType: 'leader',
+          }),
+        };
+      }));
+      setIsEvaluating(false);
+      setActiveAnalysisId(null);
+      setActiveExecutionEventId(null);
+      addToast("已发送停止指令，Hermes Agent 分析已终止。", "info");
+    } catch (error) {
+      console.error("Hermes stop failed:", error);
+      addToast(error instanceof Error ? error.message : "Hermes Agent 停止失败。", "error");
+    } finally {
+      setIsStoppingAnalysis(false);
+    }
+  };
+
   const handleTriggerEvaluate = async () => {
     if (!currentProject) return;
     setIsEvaluating(true);
+    setActiveAnalysisId(null);
+    setActiveExecutionEventId(null);
     setEvalSuccessMessage(null);
     setWorkspaceSubTab('execution');
     setIsLeftExecOpen(true); // Auto open execution logs drawer on left
@@ -1412,11 +1489,15 @@ export default function App() {
       const data = await res.json();
       if (res.ok && data.success && data.analysisId) {
         const targetAgentKey = orchestratorMode !== 'single' ? 'orchestrator' : selectedAgent;
+        setActiveAnalysisId(data.analysisId);
+        setActiveExecutionEventId(newEventId);
         setExecutionEvents(prev => prev.map(evt => {
           if (evt.id !== newEventId) return evt;
           return {
             ...evt,
             status: 'active',
+            analysisId: data.analysisId,
+            runId: data.runId,
             communicationTranscripts: [
               ...evt.communicationTranscripts,
               { senderName: "Hermes Agent", senderRole: "远端多Agent运行器", senderAvatar: "H", timestamp: "刚刚", content: `真实 Hermes 任务已创建，analysisId=${data.analysisId}，正在订阅事件流。`, bubbleType: 'leader' }
@@ -1441,6 +1522,8 @@ export default function App() {
         }));
         addToast(message, "error");
         setIsEvaluating(false);
+        setActiveAnalysisId(null);
+        setActiveExecutionEventId(null);
       }
     } catch (err) {
       console.error(err);
@@ -1452,6 +1535,8 @@ export default function App() {
       }));
       addToast("Hermes Agent API 请求失败，未生成本地模拟报告。", "error");
       setIsEvaluating(false);
+      setActiveAnalysisId(null);
+      setActiveExecutionEventId(null);
     }
   };
 
@@ -2147,16 +2232,24 @@ ${selectedTextStr}
                       <button
                         type="button"
                         onClick={() => {
-                          handleTriggerEvaluate();
-                          setIsLeftExecOpen(true); // Automatically open the Left Execution Records Drawer!
+                          if (isEvaluating) {
+                            void handleStopActiveAnalysis();
+                          } else {
+                            handleTriggerEvaluate();
+                            setIsLeftExecOpen(true); // Automatically open the Left Execution Records Drawer!
+                          }
                         }}
-                        disabled={isEvaluating}
-                        className={`bg-${activeColorBrand}-600 hover:bg-${activeColorBrand}-700 text-white disabled:opacity-60 disabled:cursor-not-allowed font-extrabold text-xs px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer select-none whitespace-nowrap self-stretch sm:self-auto`}
+                        disabled={isStoppingAnalysis || (isEvaluating && !activeAnalysisId)}
+                        className={`${isEvaluating ? "bg-rose-600 hover:bg-rose-700 active:bg-rose-800" : `bg-${activeColorBrand}-600 hover:bg-${activeColorBrand}-700`} text-white disabled:opacity-60 disabled:cursor-not-allowed font-extrabold text-xs px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer select-none whitespace-nowrap self-stretch sm:self-auto`}
                       >
                         {isEvaluating ? (
                           <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>正在调度委员研判...</span>
+                            {isStoppingAnalysis ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <X className="w-3.5 h-3.5" />
+                            )}
+                            <span>{activeAnalysisId ? (isStoppingAnalysis ? "正在停止..." : "停止分析") : "正在调度委员研判..."}</span>
                           </>
                         ) : (
                           <>

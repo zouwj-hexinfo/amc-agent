@@ -100,11 +100,18 @@ function AgentTraceTimeline({
       <div className="p-5 space-y-5">
         {events.map(event => {
           const hasTranscripts = event.communicationTranscripts.length > 0;
+          const statusColor = event.status === 'failed'
+            ? '#ef4444'
+            : event.status === 'stopped'
+              ? '#64748b'
+              : event.status === 'completed'
+                ? '#10b981'
+                : color.base;
           return (
             <section key={event.id} className="relative pl-5">
               <span
                 className="absolute left-0 top-1.5 h-2.5 w-2.5 rounded-full ring-4 ring-white"
-                style={{ backgroundColor: event.status === 'failed' ? '#ef4444' : event.status === 'completed' ? '#10b981' : color.base }}
+                style={{ backgroundColor: statusColor }}
               />
               <div className="absolute left-[4px] top-5 bottom-0 w-px bg-slate-200" />
 
@@ -121,11 +128,13 @@ function AgentTraceTimeline({
                   <span className={`rounded-full px-2 py-1 text-[10px] font-black ${
                     event.status === 'failed'
                       ? "bg-red-50 text-red-700 border border-red-100"
+                      : event.status === 'stopped'
+                        ? "bg-slate-100 text-slate-600 border border-slate-200"
                       : event.status === 'completed'
                         ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
                         : "bg-amber-50 text-amber-700 border border-amber-100"
                   }`}>
-                    {event.status === 'failed' ? '异常' : event.status === 'completed' ? '完成' : '进行中'}
+                    {event.status === 'failed' ? '异常' : event.status === 'stopped' ? '已停止' : event.status === 'completed' ? '完成' : '进行中'}
                   </span>
                 </div>
               </div>
@@ -374,6 +383,15 @@ const SECTIONS_CONFIG = [
   { key: "orchestrator", subCode: "2.4", label: "综合评估底稿", desc: "多专家委员协同终审意见", icon: Gauge, color: "text-emerald-600 bg-emerald-50" }
 ];
 
+type TuningSuggestion = { label: string; text: string };
+
+const DEFAULT_TUNING_SUGGESTIONS: TuningSuggestion[] = [
+  { label: "组织精炼", text: "重新精简这一段，用语更专业，删除空话，使其看起来更严密。" },
+  { label: "补充司法红线", text: "请补充《民法典》以及最高院最新的裁判案例抗辩机制，强化资产有效性抗辩。" },
+  { label: "补充反担保", text: "针对本段提到的诉讼保全，建议在此处补充说明已锁定足额第三方不动产提供连带反担保。" },
+  { label: "数据列表化", text: "重构此处的预测，建议将估值和资产折价数据重组为条理井然的序列要点。" },
+];
+
 interface ReportViewerProps {
   currentProject: AMCProject;
   selectedReportKey: string;
@@ -434,6 +452,9 @@ export default function ReportViewer({
 
   const [showRevisionList, setShowRevisionList] = React.useState(false);
   const [displayTab, setDisplayTab] = React.useState<'report' | 'agentTrace'>('report');
+  const [tuningSuggestions, setTuningSuggestions] = React.useState<TuningSuggestion[]>(DEFAULT_TUNING_SUGGESTIONS);
+  const [isLoadingTuningSuggestions, setIsLoadingTuningSuggestions] = React.useState(false);
+  const [tuningSuggestionError, setTuningSuggestionError] = React.useState("");
 
   const extractBrand = () => {
     const bgClass = currentTheme?.accentBg || "bg-indigo-600";
@@ -497,18 +518,55 @@ export default function ReportViewer({
 
   const activeList = currentProject.evaluations[selectedReportKey] || [];
   const activeRecord = activeList[selectedReportIndex] as EvaluationRecord | undefined;
+  const selectedTuningText = selectedParagraphs.join("\n").trim();
   const projectExecutionEvents = executionEvents
     .filter(event => event.projectId === currentProject.id)
     .slice()
     .sort((a, b) => normalizeEventTime(a.timestamp) - normalizeEventTime(b.timestamp));
 
-  // Recommendations for rapid inline tuning instructions
-  const TUNING_TAGS = [
-    { label: "✍️ 组织精炼", text: "重新精简这一段，用语更专业，删除空话，使其看起来更严密。" },
-    { label: "⚖️ 补充司法红线", text: "请补充《民法典》以及最高院最新的裁判案例抗辩机制，强化资产有效性抗辩。" },
-    { label: "🛡️ 补充追加反担保", text: "针对本段提到的诉讼保全，建议在此处补充说明已锁定足额第三方不动产提供连带反担保。" },
-    { label: "📊 数据列表化", text: "重构此处的预测，建议将估值和资产折价数据重组为条理井然的序列要点。" }
-  ];
+  React.useEffect(() => {
+    if (!activeRecord || !selectedTuningText) {
+      setTuningSuggestions(DEFAULT_TUNING_SUGGESTIONS);
+      setIsLoadingTuningSuggestions(false);
+      setTuningSuggestionError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsLoadingTuningSuggestions(true);
+    setTuningSuggestionError("");
+
+    fetch(`/api/projects/${encodeURIComponent(currentProject.id)}/evaluations/${encodeURIComponent(activeRecord.id)}/tune-suggestions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selectedText: selectedTuningText, count: 5 }),
+      signal: controller.signal,
+    })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || data.message || "微调推荐词生成失败");
+        const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+        const normalized = suggestions
+          .map((item: Partial<TuningSuggestion>) => ({
+            label: String(item.label || "").trim(),
+            text: String(item.text || "").trim(),
+          }))
+          .filter((item: TuningSuggestion) => item.label && item.text)
+          .slice(0, 7);
+        setTuningSuggestions(normalized.length ? normalized : DEFAULT_TUNING_SUGGESTIONS);
+      })
+      .catch(error => {
+        if ((error as Error).name === "AbortError") return;
+        console.error(error);
+        setTuningSuggestions(DEFAULT_TUNING_SUGGESTIONS);
+        setTuningSuggestionError("已使用默认推荐");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingTuningSuggestions(false);
+      });
+
+    return () => controller.abort();
+  }, [activeRecord?.id, currentProject.id, selectedTuningText]);
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
@@ -646,9 +704,15 @@ export default function ReportViewer({
                           {/* Recommendations */}
                           <div className="flex flex-wrap gap-1.5 items-center">
                             <span className="text-[9px] text-slate-400 mr-2 font-bold select-none">推荐语:</span>
-                            {TUNING_TAGS.map((tag, idx) => (
+                            {isLoadingTuningSuggestions && (
+                              <span className="inline-flex items-center gap-1 rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-[9px] font-bold text-indigo-600">
+                                <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                                Hermes生成中
+                              </span>
+                            )}
+                            {tuningSuggestions.map((tag, idx) => (
                               <button
-                                key={idx}
+                                key={`${tag.label}-${idx}`}
                                 type="button"
                                 onClick={() => setTuningInstruction(tag.text)}
                                 className="text-[9px] bg-white hover:bg-indigo-50 hover:text-indigo-750 text-slate-600 font-semibold px-2.5 py-1 rounded-md border border-slate-200 cursor-pointer transition-all"
@@ -656,6 +720,9 @@ export default function ReportViewer({
                                 {tag.label}
                               </button>
                             ))}
+                            {tuningSuggestionError && !isLoadingTuningSuggestions && (
+                              <span className="text-[9px] font-semibold text-slate-400">{tuningSuggestionError}</span>
+                            )}
                           </div>
 
                           <div className="flex justify-end gap-2 pt-2.5 border-t border-slate-100 select-none">

@@ -723,6 +723,27 @@ app.post('/api/projects/:id/evaluations/:evalId/tune', async (c) => {
   return c.json({ error: 'Evaluation record not found' }, 404);
 });
 
+app.post('/api/projects/:id/evaluations/:evalId/tune-suggestions', async (c) => {
+  const project = getProject(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  if (!hermesAvailable) return c.json({ error: 'Hermes Agent API 暂不可用，无法生成微调推荐词。' }, 503);
+  const { selectedText, count } = await c.req.json<{ selectedText?: string; count?: number }>();
+  if (!selectedText?.trim()) return c.json({ error: 'Missing selectedText' }, 400);
+
+  const evalId = c.req.param('evalId');
+  const records = Object.values(project.evaluations || {}).flat();
+  const record = records.find(item => item.id === evalId);
+  if (!record) return c.json({ error: 'Evaluation record not found' }, 404);
+
+  try {
+    const suggestions = await generateTuningSuggestionsWithHermes(project, record, selectedText, count);
+    return c.json({ suggestions });
+  } catch (error) {
+    console.error('Hermes paragraph tuning suggestions failed:', error);
+    return c.json({ error: 'Hermes Agent API 微调推荐词生成失败，请稍后重试。' }, 502);
+  }
+});
+
 app.get('/api/knowledge', (c) => {
   return c.json(searchKnowledgeItems({
     category: c.req.query('category'),
@@ -1598,12 +1619,72 @@ async function tuneParagraphWithHermes(project: AMCProject, record: EvaluationRe
   return tunedText;
 }
 
+async function generateTuningSuggestionsWithHermes(project: AMCProject, record: EvaluationRecord, selectedText: string, count = 5) {
+  const suggestionCount = Math.max(3, Math.min(7, Math.round(Number(count) || 5)));
+  const prompt = [
+    '你是 AMC 不良资产评估报告的 Hermes 段落精修推荐 Agent。',
+    `请针对用户选中的报告片段，生成约 ${suggestionCount} 条可直接点击使用的段落微调推荐词。`,
+    '推荐词必须贴合 AMC 尽调/法律合规/估值/风控语境，短、明确、可执行。',
+    '只输出 JSON，不要输出解释、Markdown、代码块或寒暄。',
+    '',
+    'JSON 格式：',
+    '[{"label":"不超过10字的按钮文案","text":"一条完整的微调指令"}]',
+    '',
+    '【项目背景】',
+    `项目名称：${project.name}`,
+    `客户名称：${project.customerName}`,
+    `项目类型：${project.projectType}`,
+    `债务主体：${project.debtorName}`,
+    `债权金额：${project.totalDebt} 万元`,
+    `抵质押物：${project.collateralType}`,
+    `抵押物估值：${project.collateralEstValue} 万元`,
+    `当前报告版本：v${record.version}`,
+    '',
+    '【选中原文】',
+    selectedText.trim().slice(0, 3000),
+  ].join('\n');
+
+  const reply = await askHermes({
+    prompt,
+    sessionId: `amc-tune-suggestions-${project.id}-${record.id}-${Date.now()}`,
+    conversationTitle: `AMC段落微调推荐-${project.name}`,
+  });
+  const suggestions = parseHermesTuningSuggestions(reply);
+  if (!suggestions.length) throw new Error('Hermes tuning suggestions response was empty');
+  return suggestions.slice(0, suggestionCount);
+}
+
 function cleanHermesTunedText(value: string) {
   return value
     .replace(/^```(?:markdown|md|text)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .replace(/^【?修订后段落】?[：:]\s*/i, '')
     .trim();
+}
+
+function parseHermesTuningSuggestions(value: string) {
+  const cleaned = value
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  const arrayText = cleaned.startsWith('[')
+    ? cleaned
+    : cleaned.slice(cleaned.indexOf('['), cleaned.lastIndexOf(']') + 1);
+  const parsed = JSON.parse(arrayText);
+  const rawItems = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.suggestions) ? parsed.suggestions : [];
+  return rawItems
+    .map((item: unknown) => {
+      if (!item || typeof item !== 'object') return null;
+      const record = item as { label?: unknown; text?: unknown };
+      const label = typeof record.label === 'string' ? record.label.trim() : '';
+      const text = typeof record.text === 'string' ? record.text.trim() : '';
+      if (!label || !text) return null;
+      return {
+        label: label.slice(0, 20),
+        text: text.slice(0, 300),
+      };
+    })
+    .filter(Boolean) as Array<{ label: string; text: string }>;
 }
 
 function replaceSelectedText(originalContent: string, selectedText: string, tunedText: string, instruction: string) {
