@@ -145,7 +145,7 @@ export interface EvaluationRecord {
   projectId: string;
   agentType: AgentType;
   version: number;
-  orchestrationMode?: 'single' | 'chain' | 'discuss' | 'master-slave';
+  orchestrationMode?: OrchestratorMode;
   analysisId?: string;
   hermesEventCount?: number;
   runStatus?: 'running' | 'completed' | 'failed' | 'requires_action' | 'stream_interrupted';
@@ -168,6 +168,25 @@ export interface SelfReflection {
   pros: string[];
   cons: string[];
   suggestions: string;
+}
+
+export type OrchestratorMode = 'single' | 'chain' | 'discuss' | 'master-slave';
+
+export type InstructionIntentDecision = 'start_evaluation' | 'ask_clarification' | 'reply_only';
+
+export interface InstructionIntentResult {
+  decision: InstructionIntentDecision;
+  summary: string;
+  normalizedInstruction: string;
+  reply: string;
+  clarificationQuestion?: string;
+  rationale: string;
+  confidence: number;
+  missingInfo: string[];
+  recommendedMode?: OrchestratorMode;
+  recommendedAgentType?: AgentType;
+  recommendedRoleId?: string;
+  recommendedWorkItemId?: string;
 }
 
 export interface KnowledgeItem {
@@ -282,10 +301,10 @@ export interface ExecutionEvent {
   userAvatar: string;
   timestamp: string;
   actionName: string;
-  orchestratorMode: 'single' | 'chain' | 'discuss' | 'master-slave';
+  orchestratorMode: OrchestratorMode;
   agentType?: string;
   instructionText?: string;
-  status: 'completed' | 'active' | 'failed' | 'stopped';
+  status: 'completed' | 'active' | 'failed' | 'stopped' | 'waiting_input';
   analysisId?: string;
   runId?: string;
   steps: ExecutionStep[];

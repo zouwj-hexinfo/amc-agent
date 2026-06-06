@@ -465,6 +465,7 @@ export function ExecutionDrawer({
                       const isActive = evt.status === 'active';
                       const isFailed = evt.status === 'failed';
                       const isStopped = evt.status === 'stopped';
+                      const isWaitingInput = evt.status === 'waiting_input';
 
                       return (
                         <div
@@ -477,7 +478,7 @@ export function ExecutionDrawer({
                           }`}
                         >
                           {/* Active pulsating bar */}
-                          {isActive && (
+                          {(isActive || isWaitingInput) && (
                             <span className="absolute left-0 top-0 bottom-0 w-1 bg-amber-505 animate-pulse bg-amber-500" />
                           )}
 
@@ -511,6 +512,8 @@ export function ExecutionDrawer({
                             <span className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold flex items-center gap-1 shrink-0 ${
                               isActive
                                 ? "bg-amber-50 text-amber-700 border border-amber-200 animate-pulse"
+                                : isWaitingInput
+                                ? "bg-sky-50 text-sky-700 border border-sky-200"
                                 : isFailed
                                 ? "bg-red-50 text-red-700 border border-red-150"
                                 : isStopped
@@ -522,6 +525,8 @@ export function ExecutionDrawer({
                                   <RefreshCw className="w-2.5 h-2.5 animate-spin" />
                                   <span>正在分析</span>
                                 </>
+                              ) : isWaitingInput ? (
+                                <><span>?</span><span>待补充</span></>
                               ) : isFailed ? (
                                 <><span>✕</span><span>阻断/失败</span></>
                               ) : isStopped ? (
@@ -556,7 +561,7 @@ export function ExecutionDrawer({
                       
                       <div className="space-y-1 text-left">
                         <span className="text-[10px] text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-150 px-2 py-0.5 rounded">
-                          {activeEvent.orchestratorMode === 'single' ? "🔍 独立智能专家审查" : "👥 委员会多席合议会商模式"}
+                          {activeEvent.orchestratorMode === 'single' ? "🔍 独立智能专家审查" : activeEvent.status === 'waiting_input' ? "🧭 智能规划等待补充" : "👥 委员会多席合议会商模式"}
                         </span>
                         <h4 className="text-xs font-bold text-slate-800 leading-relaxed mt-1">{activeEvent.actionName}</h4>
                         {activeEvent.instructionText && (
@@ -572,7 +577,7 @@ export function ExecutionDrawer({
                       <h4 className="font-extrabold text-[10.5px] uppercase tracking-wider text-slate-400 border-b border-slate-150 pb-1.5 flex items-center justify-between">
                         <span>流水作业进度详情</span>
                         <span className="text-[10px] text-slate-500 font-mono">
-                          {activeEvent.status === 'completed' ? "状态：审结归口存档" : activeEvent.status === 'active' ? "状态：专家交互辩论中..." : activeEvent.status === 'stopped' ? "状态：用户已停止" : "状态：安全挂起"}
+                          {activeEvent.status === 'completed' ? "状态：审结归口存档" : activeEvent.status === 'active' ? "状态：专家交互辩论中..." : activeEvent.status === 'waiting_input' ? "状态：等待用户补充" : activeEvent.status === 'stopped' ? "状态：用户已停止" : "状态：安全挂起"}
                         </span>
                       </h4>
 
@@ -636,6 +641,13 @@ export function ExecutionDrawer({
                         )}
 
                         {/* Live active indicator */}
+                        {activeEvent.status === 'waiting_input' && (
+                          <div className="flex items-center gap-2 p-1.5 text-xs text-sky-700 font-mono select-none bg-sky-50 border border-dotted border-sky-200 rounded-lg">
+                            <MessageCircle className={`w-3.5 h-3.5 ${currentTheme?.text || "text-indigo-610"}`} />
+                            <span>智能规划正在等待用户补充信息，本轮尚未创建正式 Hermes 分析任务。</span>
+                          </div>
+                        )}
+
                         {isEvaluating && activeEvent.status === 'active' && (
                           <div className="flex items-center gap-2 p-1.5 text-xs text-slate-500 animate-pulse font-mono select-none bg-indigo-50/20 border border-dotted border-indigo-200 rounded-lg">
                             <RefreshCw className={`w-3.5 h-3.5 animate-spin ${currentTheme?.text || "text-indigo-610"}`} />
@@ -660,7 +672,7 @@ export function ExecutionDrawer({
             <div className="p-3 bg-slate-100 border-t border-slate-200 flex items-center justify-between px-4 text-[10px] text-slate-500 select-none shrink-0 font-medium font-mono">
               <span>项目标识: {currentProject.id}</span>
               <span>
-                {isEvaluating ? "⏳ 多智能体协同会商并发研判管道执行中..." : activeEvent?.status === 'stopped' ? "■ 本轮Hermes分析已由用户停止" : "✓ 本轮委员会商研判作业已全面终审盖印存档"}
+                {isEvaluating ? "⏳ 多智能体协同会商并发研判管道执行中..." : activeEvent?.status === 'waiting_input' ? "? 智能规划等待用户补充，尚未启动正式评估" : activeEvent?.status === 'stopped' ? "■ 本轮Hermes分析已由用户停止" : "✓ 本轮委员会商研判作业已全面终审盖印存档"}
               </span>
             </div>
           </motion.div>

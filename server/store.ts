@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { AgentConfigBundle, AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, AgentWorkItemDefinition, AMCProject, EvaluationRecord, KnowledgeAttachment, KnowledgeItem, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
+import type { AgentConfigBundle, AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, AgentWorkItemDefinition, AMCProject, EvaluationRecord, InstructionIntentResult, KnowledgeAttachment, KnowledgeItem, KnowledgeWriteSuggestionReview, MarketObject, ProjectFile, ReportRevision } from '../src/types';
 import {
   createInitialAmcEvaluationState,
   reduceAmcEvaluationEvent,
@@ -47,6 +47,7 @@ export type AnalysisRecord = {
     agentRoleId?: string;
     agentWorkItemId?: string;
     agentWorkItemDefinition?: AgentWorkItemDefinition;
+    instructionIntent?: InstructionIntentResult;
   };
   state: AmcEvaluationState | null;
   events: HermesEvent[];

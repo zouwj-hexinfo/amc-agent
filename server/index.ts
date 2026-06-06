@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { HonoRequest } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { cors } from 'hono/cors';
-import type { AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, AgentWorkItemDefinition, AMCProject, AgentType, EvaluationRecord, KnowledgeAttachmentPreview, KnowledgeItem, MarketObject, ProjectFile, ProjectType, ReportRevision } from '../src/types';
+import type { AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem, AgentWorkItemDefinition, AMCProject, AgentType, EvaluationRecord, InstructionIntentResult, KnowledgeAttachmentPreview, KnowledgeItem, MarketObject, OrchestratorMode, ProjectFile, ProjectType, ReportRevision } from '../src/types';
 import type { StartAnalysisRequest } from '../src/hermes/types';
 import { createAnalysisEventHub } from './analysis-event-hub';
 import {
@@ -80,6 +80,12 @@ import {
   formatKnowledgeContext,
   retrieveKnowledge,
 } from './knowledge-orchestrator';
+import {
+  buildInstructionIntentPrompt,
+  buildPlanningMechanismInstructions,
+  parseInstructionIntentResponse,
+  type InstructionClarificationContext,
+} from './instruction-intent';
 import { mergeHermesKnowledgeAttachmentPreview, parseKnowledgeAttachmentFile, previewKnowledgeAttachmentFiles } from './knowledge-attachment-parser';
 
 const app = new Hono();
@@ -500,6 +506,52 @@ app.delete('/api/projects/:id/files/:fileId', (c) => {
   return c.json({ success: true });
 });
 
+app.post('/api/projects/:id/instruction-intent', async (c) => {
+  const project = getProject(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  if (!hermesAvailable) return c.json({ message: 'Hermes Agent API 暂不可用，无法完成智能规划。' }, 503);
+
+  const body = await c.req.json<{
+    userInstruction?: string;
+    orchestratorMode?: OrchestratorMode;
+    domainId?: string;
+    roleId?: string;
+    workItemId?: string;
+    clarificationContext?: InstructionClarificationContext;
+  }>();
+
+  const mode = body.orchestratorMode || 'discuss';
+  if (mode !== 'discuss') {
+    return c.json({ message: '只有智能规划模式需要前置意图解析。' }, 400);
+  }
+
+  const selectedDomain = body.domainId ? getAgentDomain(body.domainId) : getAgentDomainByCode(project.projectType);
+  const selectedRole = body.roleId ? getAgentRole(body.roleId) : null;
+  const selectedWorkItem = body.workItemId ? getAgentWorkItem(body.workItemId) : null;
+  const userInstruction = typeof body.userInstruction === 'string' ? body.userInstruction.trim() : '';
+
+  try {
+    const reply = await askHermes({
+      prompt: buildInstructionIntentPrompt({
+        project,
+        userInstruction,
+        mode,
+        domain: selectedDomain,
+        role: selectedRole,
+        workItem: selectedWorkItem,
+        clarificationContext: body.clarificationContext,
+      }),
+      sessionId: `amc-intent-${project.id}`,
+      conversationTitle: `${project.name} 智能规划意图理解`,
+    });
+    const intent = parseInstructionIntentResponse(reply);
+    return c.json({ success: true, intent });
+  } catch (error) {
+    console.error('Hermes instruction intent failed:', error);
+    return c.json({ message: error instanceof Error ? error.message : 'Hermes 智能规划意图解析失败。' }, 502);
+  }
+});
+
 app.post('/api/projects/:id/evaluate', async (c) => {
   const project = getProject(c.req.param('id'));
   if (!project) return c.json({ error: 'Project not found' }, 404);
@@ -508,11 +560,12 @@ app.post('/api/projects/:id/evaluate', async (c) => {
   const body = await c.req.json<{
     agentType?: AgentType;
     selectedSkills?: string[];
-    orchestratorMode?: 'single' | 'chain' | 'discuss' | 'master-slave';
+    orchestratorMode?: OrchestratorMode;
     userInstruction?: string;
     domainId?: string;
     roleId?: string;
     workItemId?: string;
+    instructionIntent?: InstructionIntentResult;
   }>();
   const mode = body.orchestratorMode || 'single';
   const analysisId = generateAnalysisId();
@@ -524,7 +577,10 @@ app.post('/api/projects/:id/evaluate', async (c) => {
   const skills = body.selectedSkills?.length
     ? body.selectedSkills
     : selectedDefinition?.skills || [];
-  const knowledgePlan = buildKnowledgeRetrievalPlan(project, targetAgentKey, body.userInstruction || '');
+  const effectiveInstruction = body.instructionIntent?.normalizedInstruction?.trim()
+    || body.userInstruction?.trim()
+    || '';
+  const knowledgePlan = buildKnowledgeRetrievalPlan(project, targetAgentKey, effectiveInstruction);
   const knowledgeCitations = retrieveKnowledge(knowledgePlan, listKnowledgeItems());
   const knowledgeContext = formatKnowledgeContext(knowledgeCitations);
   const activeKbs = knowledgePlan.categories;
@@ -532,20 +588,25 @@ app.post('/api/projects/:id/evaluate', async (c) => {
     company: project.name,
     year: new Date().getFullYear(),
     reportType: 'amc_evaluation',
-    request: body.userInstruction || `启动 ${project.name} 的 Hermes AMC 多Agent协作评估`,
+    request: effectiveInstruction || `启动 ${project.name} 的 Hermes AMC 多Agent协作评估`,
   };
 
   let run;
   try {
     run = await createHermesRun({
-      input: buildAmcRunInput(project, activeKbs, body.userInstruction, knowledgeContext, {
+      input: buildAmcRunInput(project, activeKbs, effectiveInstruction, knowledgeContext, {
         domain: selectedDomain || undefined,
         role: selectedRole || undefined,
         workItem: selectedWorkItem || undefined,
+        instructionIntent: body.instructionIntent,
       }),
       sessionId: `amc-analysis-${analysisId}`,
       instructions: [
         buildAmcEvaluationRunInstructions(),
+        buildPlanningMechanismInstructions(mode, body.instructionIntent, {
+          role: selectedRole,
+          workItem: selectedWorkItem,
+        }),
         buildAgentRuntimeInstructions(selectedDomain || undefined, selectedRole || undefined, selectedWorkItem || undefined),
       ].filter(Boolean).join('\n\n'),
     });
@@ -571,6 +632,7 @@ app.post('/api/projects/:id/evaluate', async (c) => {
       agentRoleId: selectedRole?.id,
       agentWorkItemId: selectedWorkItem?.id,
       agentWorkItemDefinition: selectedDefinition,
+      instructionIntent: body.instructionIntent,
       sensitiveWordsFlagged: findSensitiveWords(project),
     },
   });
@@ -1050,7 +1112,7 @@ function buildAmcRunInput(
   activeKbs: string[],
   userInstruction?: string,
   knowledgeContext?: string,
-  agentRuntime?: { domain?: AgentDomain; role?: AgentRole; workItem?: AgentWorkItem },
+  agentRuntime?: { domain?: AgentDomain; role?: AgentRole; workItem?: AgentWorkItem; instructionIntent?: InstructionIntentResult },
 ) {
   return [
     `项目名称：${project.name}`,
@@ -1063,6 +1125,7 @@ function buildAmcRunInput(
     `项目说明：${project.description}`,
     `启用知识库：${activeKbs.join('、')}`,
     userInstruction ? `用户专项指令：${userInstruction}` : '',
+    agentRuntime?.instructionIntent ? buildInstructionIntentInputBlock(agentRuntime.instructionIntent) : '',
     agentRuntime ? buildAgentRuntimeInputBlock(agentRuntime.domain, agentRuntime.role, agentRuntime.workItem) : '',
     project.files?.length ? buildProjectFilesPromptBlock(project.files) : '',
     knowledgeContext,
@@ -1073,6 +1136,17 @@ function buildAmcRunInput(
       '3. 如需更多本地知识，请输出 fenced JSON knowledge_search 协议块。',
       '4. 如形成可复用经验，只能输出 knowledge_write_suggestion 协议块，不能声称已写入正式知识库。',
     ].join('\n'),
+  ].filter(Boolean).join('\n');
+}
+
+function buildInstructionIntentInputBlock(intent: InstructionIntentResult) {
+  return [
+    '【智能规划前置理解】',
+    `决策：${intent.decision}`,
+    `理解摘要：${intent.summary}`,
+    `回复用户：${intent.reply}`,
+    intent.missingInfo.length ? `缺失信息：${intent.missingInfo.join('、')}` : '',
+    `调度理由：${intent.rationale}`,
   ].filter(Boolean).join('\n');
 }
 

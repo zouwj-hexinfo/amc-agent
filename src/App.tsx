@@ -12,7 +12,8 @@ import {
   AMCProject, ProjectType, AgentType, 
   EvaluationRecord, KnowledgeItem, QccResult, StockResult, ProjectFile,
   ExecutionEvent, ExecutionStep, CommunicationBubble, KnowledgeWriteSuggestionReview, ReportRevision,
-  AgentConfigBundle, AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem
+  AgentConfigBundle, AgentDomain, AgentRole, AgentWorkGroup, AgentWorkItem,
+  InstructionIntentResult, OrchestratorMode
 } from "./types";
 
 import AgentSettings from "./components/AgentSettings";
@@ -542,7 +543,7 @@ export default function App() {
   const [activeKbCategories, setActiveKbCategories] = React.useState<string[]>([
     "policies", "legal", "market", "cases", "methodology"
   ]);
-  const [orchestratorMode, setOrchestratorMode] = React.useState<'single' | 'chain' | 'discuss' | 'master-slave'>('discuss');
+  const [orchestratorMode, setOrchestratorMode] = React.useState<OrchestratorMode>('discuss');
   const [selectedAgent, setSelectedAgent] = React.useState<AgentType>('orchestrator');
   const [selectedAgentRoleId, setSelectedAgentRoleId] = React.useState<string>("");
   const [selectedAgentWorkItemId, setSelectedAgentWorkItemId] = React.useState<string>("");
@@ -554,10 +555,17 @@ export default function App() {
 
   // Evaluate execution triggers
   const [isEvaluating, setIsEvaluating] = React.useState(false);
+  const [isPlanningInstruction, setIsPlanningInstruction] = React.useState(false);
   const [isStoppingAnalysis, setIsStoppingAnalysis] = React.useState(false);
   const [activeAnalysisId, setActiveAnalysisId] = React.useState<string | null>(null);
   const [activeExecutionEventId, setActiveExecutionEventId] = React.useState<string | null>(null);
   const [instructionText, setInstructionText] = React.useState("");
+  const [planningClarificationContext, setPlanningClarificationContext] = React.useState<{
+    eventId: string;
+    originalInstruction: string;
+    assistantQuestion: string;
+    previousSummary: string;
+  } | null>(null);
   const [evalSuccessMessage, setEvalSuccessMessage] = React.useState<string | null>(null);
   const subscribedAnalysisIdsRef = React.useRef<Set<string>>(new Set());
 
@@ -1437,7 +1445,78 @@ export default function App() {
     }
   };
 
-  const handleTriggerEvaluate = async () => {
+  const buildEvaluationActionLabel = (mode: OrchestratorMode, instruction: string) => {
+    let actionLabel = "";
+    if (mode === 'single') {
+      const name = currentSelectedRole?.name || "专家";
+      actionLabel = `[指向指派] 由 ${name} 针对性执行审查并撰写报告`;
+    } else if (mode === 'chain') {
+      actionLabel = `[顺序执行] 启动法务合规、项目评估、风审汇总串行流程`;
+    } else {
+      actionLabel = `[智能规划] 根据指令意图智能推荐并执行智能体交叉会商`;
+    }
+
+    if (instruction) actionLabel += `（针对批示："${instruction.substring(0, 15)}..."）`;
+    return actionLabel;
+  };
+
+  const buildLiveExecutionEvent = (
+    eventId: string,
+    mode: OrchestratorMode,
+    eventInstruction: string,
+    options?: { status?: ExecutionEvent['status']; planningOnly?: boolean },
+  ): ExecutionEvent => {
+    const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const planningOnly = Boolean(options?.planningOnly);
+    return {
+      id: eventId,
+      projectId: currentProject!.id,
+      projectName: currentProject!.name,
+      user: userNickname || "Lucky Ding",
+      userRole: userRole || "首席信批合规官",
+      userAvatar: userAvatar || "LD",
+      timestamp: timestampStr,
+      actionName: planningOnly ? `[智能规划] 正在理解用户指令并判断后续操作` : buildEvaluationActionLabel(mode, eventInstruction),
+      orchestratorMode: mode,
+      agentType: selectedAgent,
+      instructionText: eventInstruction || undefined,
+      status: options?.status || 'active',
+      steps: planningOnly ? [
+        { step: "1", title: "智能规划意图理解", desc: "正在调用 Hermes 理解用户真实意图，判断是否需要启动评估", status: "active" },
+        { step: "2", title: "信息完整性校验", desc: "等待意图理解结果，必要时将反问补充信息", status: "pending" },
+        { step: "3", title: "正式评估任务创建", desc: "仅在意图明确且信息充分后创建 Hermes 分析任务", status: "pending" },
+        { step: "4", title: "专家协作执行", desc: "正式任务启动后接入真实 Hermes 事件流", status: "pending" },
+        { step: "5", title: "成果库封存与双向交付", desc: "报告完成后将自动写入成果目录", status: "pending" }
+      ] : [
+        { step: "1", title: "指令解析与委员分拨对齐", desc: "正在智能解析控制台派发语境，确定对公底层不良债权核心风险点", status: "completed" },
+        { step: "2", title: "合规审查与专家自检检索", desc: "自动匹配信托规范及司法红线自检规则知识，并提供上下文嵌入支持", status: "completed" },
+        { 
+          step: "3", 
+          title: mode === 'single' ? "专家独任智能决策审核" : "委员在线辩论交叉审计", 
+          desc: mode === 'single' ? "由核心专家智能体独立针对底稿执行单兵合规深度解析" : "各常任代表（法务、估值、风控）启动实时交叉辩论会商发言", 
+          status: "active" 
+        },
+        { step: "4", title: "品质评估与自反打分修正", desc: "首席品质控制专家针对法规及金融风控指标对合并草稿进行自我打分评估纠错", status: "pending" },
+        { step: "5", title: "成果库封存与双向交付", desc: "融合各委员会审议批件，生成具有高可用信托参考性质的多页最终文告底稿", status: "pending" }
+      ],
+      communicationTranscripts: [
+        buildUserInstructionBubble(eventInstruction || "启动当前项目 Hermes AMC 多Agent协作评估")
+      ]
+    };
+  };
+
+  const addExecutionBubble = (eventId: string, bubble: CommunicationBubble) => {
+    setExecutionEvents(prev => prev.map(evt => evt.id === eventId
+      ? { ...evt, communicationTranscripts: [...evt.communicationTranscripts, bubble] }
+      : evt
+    ));
+  };
+
+  const startEvaluationRun = async (
+    eventId: string,
+    runInstruction: string,
+    intent?: InstructionIntentResult,
+  ) => {
     if (!currentProject) return;
     setIsEvaluating(true);
     setActiveAnalysisId(null);
@@ -1448,58 +1527,6 @@ export default function App() {
 
     const selectedSkills = currentSelectedWorkItem?.definition.skills || [];
 
-    const newEventId = `evt-live-${Date.now()}`;
-    const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-
-    let actionLabel = "";
-    if (orchestratorMode === 'single') {
-      const name = currentSelectedRole?.name || "专家";
-      actionLabel = `[指向指派] 由 ${name} 针对性执行审查并撰写报告`;
-    } else if (orchestratorMode === 'chain') {
-      actionLabel = `[顺序执行] 启动法务合规、项目评估、风审汇总串行流程`;
-    } else if (orchestratorMode === 'discuss') {
-      actionLabel = `[智能规划] 根据指令意图智能推荐并执行智能体交叉会商`;
-    } else {
-      actionLabel = `[智能规划] 根据指令意图智能推荐并执行智能体交叉会商`;
-    }
-
-    if (instructionText) {
-      actionLabel += `（针对批示："${instructionText.substring(0, 15)}..."）`;
-    }
-
-    const liveEvent: ExecutionEvent = {
-      id: newEventId,
-      projectId: currentProject.id,
-      projectName: currentProject.name,
-      user: userNickname || "Lucky Ding",
-      userRole: userRole || "首席信批合规官",
-      userAvatar: userAvatar || "LD",
-      timestamp: timestampStr,
-      actionName: actionLabel,
-      orchestratorMode,
-      agentType: selectedAgent,
-      instructionText: instructionText || undefined,
-      status: 'active',
-      steps: [
-        { step: "1", title: "指令解析与委员分拨对齐", desc: "正在智能解析控制台派发语境，确定对公底层不良债权核心风险点", status: "completed" },
-        { step: "2", title: "合规审查与专家自检检索", desc: "自动匹配信托规范及司法红线自检规则知识，并提供上下文嵌入支持", status: "completed" },
-        { 
-          step: "3", 
-          title: orchestratorMode === 'single' ? "专家独任智能决策审核" : "委员在线辩论交叉审计", 
-          desc: orchestratorMode === 'single' ? "由核心专家智能体独立针对底稿执行单兵合规深度解析" : "各常任代表（法务、估值、风控）启动实时交叉交叉辩论会商发言", 
-          status: "active" 
-        },
-        { step: "4", title: "品质评估与自反打分修正", desc: "首席品质控制专家针对法规及金融风控指标对合并草稿进行自我打分评估纠错", status: "pending" },
-        { step: "5", title: "成果库封存与双向交付", desc: "融合各委员会审议批件，生成具有高可用信托参考性质的多页最终文告底稿", status: "pending" }
-      ],
-      communicationTranscripts: [
-        buildUserInstructionBubble(instructionText || "启动当前项目 Hermes AMC 多Agent协作评估")
-      ]
-    };
-
-    setExecutionEvents(prev => [liveEvent, ...prev]);
-    setSelectedEventId(newEventId);
-
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/evaluate`, {
         method: "POST",
@@ -1508,22 +1535,26 @@ export default function App() {
           agentType: selectedAgent,
           selectedSkills,
           orchestratorMode: orchestratorMode,
-          userInstruction: instructionText,
+          userInstruction: runInstruction,
           domainId: currentAgentDomain?.id,
           roleId: currentSelectedRole?.id,
-          workItemId: currentSelectedWorkItem?.id
+          workItemId: currentSelectedWorkItem?.id,
+          instructionIntent: intent,
         })
       });
       const data = await res.json();
       if (res.ok && data.success && data.analysisId) {
         const targetAgentKey = orchestratorMode !== 'single' ? 'orchestrator' : selectedAgent;
         setActiveAnalysisId(data.analysisId);
-        setActiveExecutionEventId(newEventId);
+        setActiveExecutionEventId(eventId);
         setExecutionEvents(prev => prev.map(evt => {
-          if (evt.id !== newEventId) return evt;
+          if (evt.id !== eventId) return evt;
           return {
             ...evt,
             status: 'active',
+            actionName: buildEvaluationActionLabel(orchestratorMode, runInstruction),
+            instructionText: runInstruction || evt.instructionText,
+            steps: buildLiveExecutionEvent(evt.id, orchestratorMode, runInstruction).steps,
             analysisId: data.analysisId,
             runId: data.runId,
             communicationTranscripts: [
@@ -1532,11 +1563,11 @@ export default function App() {
             ],
           };
         }));
-        subscribeToEvaluationEvents(data.analysisId, newEventId, targetAgentKey);
+        subscribeToEvaluationEvents(data.analysisId, eventId, targetAgentKey);
       } else {
         const message = data.message || data.error || "Hermes Agent API 启动失败，未生成本地模拟报告。";
         setExecutionEvents(prev => prev.map(evt => {
-          if (evt.id === newEventId) {
+          if (evt.id === eventId) {
             return {
               ...evt,
               status: 'failed',
@@ -1556,7 +1587,7 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setExecutionEvents(prev => prev.map(evt => {
-        if (evt.id === newEventId) {
+        if (evt.id === eventId) {
           return { ...evt, status: 'failed' };
         }
         return evt;
@@ -1565,6 +1596,152 @@ export default function App() {
       setIsEvaluating(false);
       setActiveAnalysisId(null);
       setActiveExecutionEventId(null);
+    }
+  };
+
+  const handleSubmitInstruction = async () => {
+    if (!currentProject || isPlanningInstruction) return;
+
+    const submittedInstruction = instructionText.trim();
+
+    if (orchestratorMode !== 'discuss') {
+      const eventId = `evt-live-${Date.now()}`;
+      const liveEvent = buildLiveExecutionEvent(eventId, orchestratorMode, submittedInstruction);
+      setExecutionEvents(prev => [liveEvent, ...prev]);
+      setSelectedEventId(eventId);
+      setPlanningClarificationContext(null);
+      await startEvaluationRun(eventId, submittedInstruction);
+      return;
+    }
+
+    const eventId = planningClarificationContext?.eventId || `evt-live-${Date.now()}`;
+    setIsPlanningInstruction(true);
+    setActiveAnalysisId(null);
+    setActiveExecutionEventId(null);
+    setEvalSuccessMessage(null);
+    setWorkspaceSubTab('execution');
+    setIsLeftExecOpen(true);
+
+    if (planningClarificationContext) {
+      addExecutionBubble(eventId, buildUserInstructionBubble(submittedInstruction || "补充智能规划所需信息"));
+      setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? {
+        ...evt,
+        status: 'active',
+        steps: evt.steps.map(step => step.step === "2"
+          ? { ...step, title: "补充信息理解", desc: "已收到用户补充，正在重新判断是否可启动评估", status: "active" as const }
+          : step.step === "1"
+            ? { ...step, status: "completed" as const }
+            : step
+        ),
+      } : evt));
+    } else {
+      const planningEvent = buildLiveExecutionEvent(eventId, 'discuss', submittedInstruction, { planningOnly: true });
+      setExecutionEvents(prev => [planningEvent, ...prev]);
+      setSelectedEventId(eventId);
+    }
+
+    try {
+      const response = await fetch(`/api/projects/${currentProject.id}/instruction-intent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userInstruction: submittedInstruction,
+          orchestratorMode,
+          domainId: currentAgentDomain?.id,
+          roleId: currentSelectedRole?.id,
+          workItemId: currentSelectedWorkItem?.id,
+          clarificationContext: planningClarificationContext ? {
+            eventId: planningClarificationContext.eventId,
+            originalInstruction: planningClarificationContext.originalInstruction,
+            assistantQuestion: planningClarificationContext.assistantQuestion,
+            previousSummary: planningClarificationContext.previousSummary,
+          } : undefined,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success || !data.intent) {
+        throw new Error(data.message || data.error || "Hermes 智能规划意图解析失败。");
+      }
+
+      const intent = data.intent as InstructionIntentResult;
+      const plannerBubble: CommunicationBubble = {
+        senderName: "智能规划助手",
+        senderRole: intent.decision === 'ask_clarification' ? "需要补充" : intent.decision === 'reply_only' ? "仅回复" : "意图理解",
+        senderAvatar: "规",
+        timestamp: "刚刚",
+        content: intent.decision === 'ask_clarification'
+          ? (intent.clarificationQuestion || intent.reply)
+          : `${intent.summary}\n\n${intent.reply}`,
+        bubbleType: 'leader',
+      };
+
+      if (intent.decision === 'ask_clarification') {
+        setPlanningClarificationContext({
+          eventId,
+          originalInstruction: planningClarificationContext?.originalInstruction || submittedInstruction,
+          assistantQuestion: intent.clarificationQuestion || intent.reply,
+          previousSummary: intent.summary,
+        });
+        setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? {
+          ...evt,
+          status: 'waiting_input',
+          steps: evt.steps.map(step => {
+            if (step.step === "1") return { ...step, status: "completed" as const };
+            if (step.step === "2") return { ...step, title: "等待用户补充信息", desc: intent.clarificationQuestion || "智能规划需要更多信息后再决定是否启动评估", status: "active" as const };
+            return step;
+          }),
+          communicationTranscripts: [...evt.communicationTranscripts, plannerBubble],
+        } : evt));
+        addToast("智能规划需要补充信息，已在执行记录中提出反问。", "info");
+        setInstructionText("");
+        return;
+      }
+
+      if (intent.decision === 'reply_only') {
+        setPlanningClarificationContext(null);
+        setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? {
+          ...evt,
+          status: 'completed',
+          actionName: "[智能规划] 已回复用户，本次未启动正式评估",
+          steps: evt.steps.map(step => step.step === "1"
+            ? { ...step, status: "completed" as const }
+            : step.step === "2"
+              ? { ...step, title: "非评估意图处理", desc: "智能规划判断本次只需回复，不创建 Hermes 分析任务", status: "completed" as const }
+              : step
+          ),
+          communicationTranscripts: [...evt.communicationTranscripts, plannerBubble],
+        } : evt));
+        addToast("智能规划已回复，本次未启动正式评估。", "info");
+        return;
+      }
+
+      setPlanningClarificationContext(null);
+      setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? {
+        ...evt,
+        status: 'active',
+        communicationTranscripts: [...evt.communicationTranscripts, plannerBubble],
+        steps: evt.steps.map(step => {
+          if (step.step === "1" || step.step === "2") return { ...step, status: "completed" as const };
+          if (step.step === "3") return { ...step, title: "正式评估任务创建", desc: "意图明确，正在创建 Hermes 分析任务", status: "active" as const };
+          return step;
+        }),
+      } : evt));
+      await startEvaluationRun(eventId, intent.normalizedInstruction || submittedInstruction, intent);
+    } catch (error) {
+      console.error("Hermes instruction planning failed:", error);
+      const message = error instanceof Error ? error.message : "Hermes 智能规划意图解析失败。";
+      setExecutionEvents(prev => prev.map(evt => evt.id === eventId ? {
+        ...evt,
+        status: 'failed',
+        communicationTranscripts: [
+          ...evt.communicationTranscripts,
+          { senderName: "智能规划助手", senderRole: "解析失败", senderAvatar: "!", timestamp: "刚刚", content: message, bubbleType: 'leader' },
+        ],
+      } : evt));
+      addToast(message, "error");
+      setPlanningClarificationContext(null);
+    } finally {
+      setIsPlanningInstruction(false);
     }
   };
 
@@ -2115,7 +2292,7 @@ ${selectedTextStr}
                 />
 
                 {/* 2. AMC 专家意见定制化指令下达区 */}
-	                <div className="shrink-0 bg-white p-4 border border-slate-200 rounded-2xl shadow-xs space-y-3 text-left max-h-[42vh] overflow-visible">
+	                <div className="mx-auto w-full md:min-w-[700px] max-w-[1100px] shrink-0 bg-white p-4 border border-slate-200 rounded-2xl shadow-xs space-y-3 text-left max-h-[42vh] overflow-visible">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                     <div className="flex items-center gap-2">
                       <MessageSquare className={`w-4 h-4 ${currentTheme.text}`} />
@@ -2163,7 +2340,7 @@ ${selectedTextStr}
 	                                    key={w.mode}
 	                                    type="button"
 	                                    onClick={() => {
-	                                      setOrchestratorMode(w.mode as any);
+	                                      setOrchestratorMode(w.mode as OrchestratorMode);
 	                                      if (w.mode === 'single') {
 	                                        setSelectedAgent('law_review');
 	                                      } else {
@@ -2255,17 +2432,21 @@ ${selectedTextStr}
                         onClick={() => {
                           if (isEvaluating) {
                             void handleStopActiveAnalysis();
-                          } else {
-                            handleTriggerEvaluate();
+                          } else if (!isPlanningInstruction) {
+                            void handleSubmitInstruction();
                             setIsLeftExecOpen(true); // Automatically open the Left Execution Records Drawer!
+                          } else {
+                            setIsLeftExecOpen(true);
                           }
                         }}
-                        disabled={isStoppingAnalysis || (isEvaluating && !activeAnalysisId)}
-                        aria-label={isEvaluating ? (activeAnalysisId ? "停止分析" : "正在调度委员研判") : "下达指令"}
-                        title={isEvaluating ? (activeAnalysisId ? (isStoppingAnalysis ? "正在停止..." : "停止分析") : "正在调度委员研判...") : "下达指令"}
+                        disabled={isStoppingAnalysis || isPlanningInstruction || (isEvaluating && !activeAnalysisId)}
+                        aria-label={isPlanningInstruction ? "正在智能规划" : isEvaluating ? (activeAnalysisId ? "停止分析" : "正在调度委员研判") : "下达指令"}
+                        title={isPlanningInstruction ? "正在智能规划..." : isEvaluating ? (activeAnalysisId ? (isStoppingAnalysis ? "正在停止..." : "停止分析") : "正在调度委员研判...") : "下达指令"}
                         className={`absolute bottom-3 right-3 h-9 w-9 rounded-xl ${isEvaluating ? "bg-rose-600 hover:bg-rose-700 active:bg-rose-800" : `bg-${activeColorBrand}-600 hover:bg-${activeColorBrand}-700`} text-white disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center transition-all shadow-md cursor-pointer select-none active:scale-95`}
                       >
-                        {isEvaluating ? (
+                        {isPlanningInstruction ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : isEvaluating ? (
                           <>
                             {isStoppingAnalysis ? (
                               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
