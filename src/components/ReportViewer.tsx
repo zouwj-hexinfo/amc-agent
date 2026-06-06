@@ -385,13 +385,6 @@ const SECTIONS_CONFIG = [
 
 type TuningSuggestion = { label: string; text: string };
 
-const DEFAULT_TUNING_SUGGESTIONS: TuningSuggestion[] = [
-  { label: "组织精炼", text: "重新精简这一段，用语更专业，删除空话，使其看起来更严密。" },
-  { label: "补充司法红线", text: "请补充《民法典》以及最高院最新的裁判案例抗辩机制，强化资产有效性抗辩。" },
-  { label: "补充反担保", text: "针对本段提到的诉讼保全，建议在此处补充说明已锁定足额第三方不动产提供连带反担保。" },
-  { label: "数据列表化", text: "重构此处的预测，建议将估值和资产折价数据重组为条理井然的序列要点。" },
-];
-
 interface ReportViewerProps {
   currentProject: AMCProject;
   selectedReportKey: string;
@@ -452,9 +445,8 @@ export default function ReportViewer({
 
   const [showRevisionList, setShowRevisionList] = React.useState(false);
   const [displayTab, setDisplayTab] = React.useState<'report' | 'agentTrace'>('report');
-  const [tuningSuggestions, setTuningSuggestions] = React.useState<TuningSuggestion[]>(DEFAULT_TUNING_SUGGESTIONS);
+  const [tuningSuggestions, setTuningSuggestions] = React.useState<TuningSuggestion[]>([]);
   const [isLoadingTuningSuggestions, setIsLoadingTuningSuggestions] = React.useState(false);
-  const [tuningSuggestionError, setTuningSuggestionError] = React.useState("");
 
   const extractBrand = () => {
     const bgClass = currentTheme?.accentBg || "bg-indigo-600";
@@ -526,15 +518,14 @@ export default function ReportViewer({
 
   React.useEffect(() => {
     if (!activeRecord || !selectedTuningText) {
-      setTuningSuggestions(DEFAULT_TUNING_SUGGESTIONS);
+      setTuningSuggestions([]);
       setIsLoadingTuningSuggestions(false);
-      setTuningSuggestionError("");
       return;
     }
 
     const controller = new AbortController();
+    setTuningSuggestions([]);
     setIsLoadingTuningSuggestions(true);
-    setTuningSuggestionError("");
 
     fetch(`/api/projects/${encodeURIComponent(currentProject.id)}/evaluations/${encodeURIComponent(activeRecord.id)}/tune-suggestions`, {
       method: "POST",
@@ -553,13 +544,12 @@ export default function ReportViewer({
           }))
           .filter((item: TuningSuggestion) => item.label && item.text)
           .slice(0, 7);
-        setTuningSuggestions(normalized.length ? normalized : DEFAULT_TUNING_SUGGESTIONS);
+        setTuningSuggestions(normalized);
       })
       .catch(error => {
         if ((error as Error).name === "AbortError") return;
         console.error(error);
-        setTuningSuggestions(DEFAULT_TUNING_SUGGESTIONS);
-        setTuningSuggestionError("已使用默认推荐");
+        setTuningSuggestions([]);
       })
       .finally(() => {
         if (!controller.signal.aborted) setIsLoadingTuningSuggestions(false);
@@ -720,9 +710,6 @@ export default function ReportViewer({
                                 {tag.label}
                               </button>
                             ))}
-                            {tuningSuggestionError && !isLoadingTuningSuggestions && (
-                              <span className="text-[9px] font-semibold text-slate-400">{tuningSuggestionError}</span>
-                            )}
                           </div>
 
                           <div className="flex justify-end gap-2 pt-2.5 border-t border-slate-100 select-none">
