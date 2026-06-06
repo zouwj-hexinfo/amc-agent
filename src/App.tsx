@@ -707,6 +707,15 @@ export default function App() {
     report?: { content?: string };
   };
 
+  const buildUserInstructionBubble = React.useCallback((content: string, timestamp = "刚刚"): CommunicationBubble => ({
+    senderName: userNickname || "Lucky Ding",
+    senderRole: "用户输入",
+    senderAvatar: userAvatar || "LD",
+    timestamp,
+    content,
+    bubbleType: 'user',
+  }), [userAvatar, userNickname]);
+
   const buildExecutionEventFromAnalysis = React.useCallback((record: AnalysisSummary, project: AMCProject): ExecutionEvent => {
     const runStatus = record.runStatus || 'running';
     const isCompleted = runStatus === 'completed';
@@ -746,6 +755,7 @@ export default function App() {
         { step: "5", title: "成果库封存与双向交付", desc: isCompleted ? "最终报告已写入项目成果目录" : "报告完成后将自动写入成果目录", status: stepStatus("5") },
       ],
       communicationTranscripts: [
+        buildUserInstructionBubble(request, (record.updatedAt || new Date().toISOString()).replace('T', ' ').substring(0, 19)),
         {
           senderName: "Hermes Agent",
           senderRole: isCompleted ? "任务完成" : isStopped ? "用户停止" : isFailed ? "任务异常" : isWaiting ? "等待授权" : "运行恢复",
@@ -764,7 +774,7 @@ export default function App() {
         },
       ],
     };
-  }, [userAvatar, userNickname, userRole]);
+  }, [buildUserInstructionBubble, userAvatar, userNickname, userRole]);
 
   // In-card confirmation id state for safe undoing without browser block modals
   const [confirmUndoId, setConfirmUndoId] = React.useState<string | null>(null);
@@ -1222,9 +1232,12 @@ export default function App() {
       if (!events.length) return;
       setExecutionEvents(prev => prev.map(evt => {
         if (evt.id !== eventId) return evt;
+        const userInstructionBubble = evt.instructionText
+          ? [buildUserInstructionBubble(evt.instructionText, evt.timestamp)]
+          : [];
         return events.reduce((next, event) => applyHermesEventToExecutionEvent(next, event), {
           ...evt,
-          communicationTranscripts: [],
+          communicationTranscripts: userInstructionBubble,
         });
       }));
     } catch (error) {
@@ -1480,8 +1493,7 @@ export default function App() {
         { step: "5", title: "成果库封存与双向交付", desc: "融合各委员会审议批件，生成具有高可用信托参考性质的多页最终文告底稿", status: "pending" }
       ],
       communicationTranscripts: [
-        { senderName: "综合规划专家", senderRole: "多智能体总协调", senderAvatar: "🌟", timestamp: "刚刚", content: `收到最新派发指令："${instructionText || '开启多维评估'}"。正在分析不良贷款基础要素。`, bubbleType: 'leader' },
-        { senderName: "法务合规专家", senderRole: "首席法审顾问", senderAvatar: "⚖️", timestamp: "刚刚", content: `正在针对《民法典》及AMC不良登记司法红线调阅并复刻底层资产担保。第一位顺查封及对抗抵押已经拉起，正在检索关联历史纠纷案底。`, bubbleType: 'lawyer' }
+        buildUserInstructionBubble(instructionText || "启动当前项目 Hermes AMC 多Agent协作评估")
       ]
     };
 

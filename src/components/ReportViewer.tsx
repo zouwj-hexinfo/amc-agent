@@ -1,7 +1,7 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  CheckCircle2, Clock, FileText, Wand2, RefreshCw, X, AlertTriangle, FileCheck2, ShieldCheck, Activity, Gauge, MessageCircle
+  CheckCircle2, Clock, FileText, Wand2, RefreshCw, X, AlertTriangle, FileCheck2, ShieldCheck, Activity, Gauge, MessageCircle, Bot, UserRound, TerminalSquare
 } from "lucide-react";
 import { EvaluationRecord, AMCProject, ExecutionEvent, CommunicationBubble } from "../types";
 import MarkdownRenderer from "./MarkdownRenderer";
@@ -86,18 +86,26 @@ function AgentTraceTimeline({
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
-      <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
+      <div className="border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2">
-          <MessageCircle className="w-4 h-4" style={{ color: color.base }} />
-          <span className="text-xs font-extrabold text-slate-800">智能体交互流水</span>
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
+            <TerminalSquare className="h-3.5 w-3.5" style={{ color: color.base }} />
+          </span>
+          <div className="min-w-0">
+            <div className="text-xs font-extrabold text-slate-900">智能体交互流水</div>
+            <div className="text-[10px] font-semibold text-slate-400">
+              当前项目后续 Hermes Agent 返回消息与用户输入文本
+            </div>
+          </div>
         </div>
-        <span className="text-[10px] font-bold text-slate-400">
+        <div className="mt-2 text-[10px] font-bold text-slate-400 sm:mt-0 sm:text-right">
           {events.length} 次执行 · {events.reduce((sum, event) => sum + event.communicationTranscripts.length, 0)} 条通信
-        </span>
+        </div>
       </div>
 
-      <div className="p-5 space-y-5">
+      <div className="bg-slate-50/70 px-3 py-4 sm:px-5">
+        <div className="space-y-5">
         {events.map(event => {
           const hasTranscripts = event.communicationTranscripts.length > 0;
           const statusColor = event.status === 'failed'
@@ -107,22 +115,25 @@ function AgentTraceTimeline({
               : event.status === 'completed'
                 ? '#10b981'
                 : color.base;
+          const transcriptCount = event.communicationTranscripts.length;
+          const shortAnalysisId = event.analysisId?.replace(/^analysis-/, '').slice(0, 10);
           return (
-            <section key={event.id} className="relative pl-5">
-              <span
-                className="absolute left-0 top-1.5 h-2.5 w-2.5 rounded-full ring-4 ring-white"
-                style={{ backgroundColor: statusColor }}
-              />
-              <div className="absolute left-[4px] top-5 bottom-0 w-px bg-slate-200" />
-
-              <div className="mb-3 rounded-xl border border-slate-150 bg-slate-50/60 px-3.5 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-xs font-extrabold text-slate-800 truncate">{event.actionName}</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-bold text-slate-400">
-                      <span>{event.timestamp}</span>
-                      <span>{event.orchestratorMode === 'single' ? '单专家' : '多智能体会商'}</span>
-                      <span>{event.communicationTranscripts.length} 条通信</span>
+            <section key={event.id} className="rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <div className="border-b border-slate-100 px-3.5 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <span
+                      className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full ring-4 ring-slate-50"
+                      style={{ backgroundColor: statusColor }}
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate text-[11px] font-extrabold text-slate-900">{event.actionName}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate-400">
+                        <span>{event.timestamp}</span>
+                        <span>{event.orchestratorMode === 'single' ? '指定专家' : event.orchestratorMode === 'chain' ? '顺序执行' : '智能规划'}</span>
+                        <span>{transcriptCount} 条消息</span>
+                        {shortAnalysisId && <span className="font-mono">analysis {shortAnalysisId}</span>}
+                      </div>
                     </div>
                   </div>
                   <span className={`rounded-full px-2 py-1 text-[10px] font-black ${
@@ -140,45 +151,76 @@ function AgentTraceTimeline({
               </div>
 
               {hasTranscripts ? (
-                <div className="space-y-3">
+                <div className="space-y-3 px-3 py-3.5 sm:px-4">
                   {event.communicationTranscripts.map((bubble, index) => (
                     <React.Fragment key={`${event.id}-${index}`}>
                       <AgentTraceBubble
                         bubble={bubble}
                         currentTheme={currentTheme}
+                        brand={brand}
                       />
                     </React.Fragment>
                   ))}
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-[11px] font-semibold text-slate-400">
+                <div className="m-3.5 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-[11px] font-semibold text-slate-400">
                   本次执行暂无通信气泡记录。
                 </div>
               )}
             </section>
           );
         })}
+        </div>
       </div>
     </div>
   );
 }
 
-function AgentTraceBubble({ bubble, currentTheme }: { bubble: CommunicationBubble; currentTheme: any }) {
-  let themeBg = "bg-white border-slate-150";
+function AgentTraceBubble({
+  bubble,
+  currentTheme,
+  brand,
+}: {
+  bubble: CommunicationBubble;
+  currentTheme: any;
+  brand: string;
+}) {
+  const color = hexMap[brand] || hexMap.indigo;
+  const isUser = bubble.bubbleType === 'user';
+  const isTool = bubble.senderName.includes('工具') || bubble.senderRole.toLowerCase().includes('tool');
+  let themeBg = "border-slate-200 bg-white";
   if (bubble.bubbleType === 'lawyer') themeBg = `${currentTheme?.badge || "bg-indigo-50/40 border-indigo-100/60"}`;
-  else if (bubble.bubbleType === 'valuer') themeBg = "bg-emerald-50/30 border-emerald-150/40";
-  else if (bubble.bubbleType === 'risk') themeBg = "bg-amber-50/20 border-amber-100/40";
-  else if (bubble.bubbleType === 'leader') themeBg = "bg-slate-50 border-slate-150";
+  else if (bubble.bubbleType === 'valuer') themeBg = "border-emerald-100 bg-emerald-50/30";
+  else if (bubble.bubbleType === 'risk') themeBg = "border-amber-100 bg-amber-50/30";
+  else if (bubble.bubbleType === 'leader') themeBg = "border-slate-200 bg-slate-50";
+  else if (isUser) themeBg = "border-slate-300 bg-slate-900 text-white";
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-slate-500">
-        <span>{bubble.senderAvatar} {bubble.senderName} · {bubble.senderRole}</span>
-        <span className="font-mono text-slate-400">{bubble.timestamp}</span>
+    <div className={`flex gap-2.5 ${isUser ? "justify-end" : "justify-start"}`}>
+      {!isUser && (
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-[10px] font-black text-slate-600 shadow-3xs">
+          {isTool ? <TerminalSquare className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+        </div>
+      )}
+      <div className={`min-w-0 ${isUser ? "max-w-[82%]" : "max-w-[92%]"} space-y-1`}>
+        <div className={`flex flex-wrap items-center gap-2 text-[10px] font-bold ${isUser ? "justify-end text-slate-400" : "text-slate-500"}`}>
+          <span>{bubble.senderName} · {bubble.senderRole}</span>
+          <span className="font-mono text-slate-400">{bubble.timestamp}</span>
+        </div>
+        <div
+          className={`rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed shadow-3xs whitespace-pre-wrap ${
+            isUser ? "rounded-tr-sm" : "rounded-tl-sm"
+          } ${themeBg}`}
+          style={isUser ? { backgroundColor: color.dark, borderColor: color.dark } : undefined}
+        >
+          {bubble.content}
+        </div>
       </div>
-      <div className={`rounded-xl border p-3 text-[11px] leading-relaxed text-slate-700 shadow-3xs whitespace-pre-wrap ${themeBg}`}>
-        {bubble.content}
-      </div>
+      {isUser && (
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-[10px] font-black text-slate-600 shadow-3xs">
+          <UserRound className="h-3.5 w-3.5" />
+        </div>
+      )}
     </div>
   );
 }
