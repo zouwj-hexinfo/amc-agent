@@ -16,3 +16,11 @@ body {
   color: #1e293b;
 }
 
+.instruction-input-scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.instruction-input-scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}

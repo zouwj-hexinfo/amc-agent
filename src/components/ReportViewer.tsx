@@ -72,6 +72,25 @@ function AgentTraceTimeline({
   brand: string;
 }) {
   const color = hexMap[brand] || hexMap.indigo;
+  const bottomAnchorRef = React.useRef<HTMLDivElement | null>(null);
+  const latestMessageSignature = React.useMemo(
+    () => events.map(event => {
+      const lastBubble = event.communicationTranscripts[event.communicationTranscripts.length - 1];
+      return [
+        event.id,
+        event.status,
+        event.communicationTranscripts.length,
+        lastBubble?.senderName || "",
+        lastBubble?.senderRole || "",
+        lastBubble?.content.length || 0,
+      ].join(":");
+    }).join("|"),
+    [events]
+  );
+
+  React.useEffect(() => {
+    bottomAnchorRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [latestMessageSignature]);
 
   if (events.length === 0) {
     return (
@@ -170,6 +189,7 @@ function AgentTraceTimeline({
             </section>
           );
         })}
+          <div ref={bottomAnchorRef} className="h-px" aria-hidden="true" />
         </div>
       </div>
     </div>

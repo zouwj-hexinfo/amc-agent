@@ -2243,13 +2243,13 @@ ${selectedTextStr}
 		                  </div>
 
 	                  <div className="space-y-3">
-                    <textarea
-                      value={instructionText}
-                      onChange={(e) => setInstructionText(e.target.value)}
-                      placeholder="请输入本次特别审议的专家意见指引（例如：‘请法务专家核实债务人多头诉讼，限缩抵押率安全线’），系统将对智能研判做重点对准修正，不填则默认标准规划输出..."
-                      className="w-full text-xs font-medium text-slate-700 bg-slate-50/55 hover:bg-slate-50/80 focus:bg-white p-3 border border-slate-200 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 rounded-xl transition-all h-20 resize-none leading-relaxed text-left"
-                    />
-                    <div className="flex justify-end">
+                    <div className="relative">
+                      <textarea
+                        value={instructionText}
+                        onChange={(e) => setInstructionText(e.target.value)}
+                        placeholder="请输入本次特别审议的专家意见指引（例如：‘请法务专家核实债务人多头诉讼，限缩抵押率安全线’），系统将对智能研判做重点对准修正，不填则默认标准规划输出..."
+                        className="instruction-input-scrollbar-hidden w-full text-xs font-medium text-slate-700 bg-slate-50/55 hover:bg-slate-50/80 focus:bg-white p-3 pr-14 pb-12 border border-slate-200 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 rounded-xl transition-all h-24 resize-none leading-relaxed text-left"
+                      />
                       <button
                         type="button"
                         onClick={() => {
@@ -2261,7 +2261,9 @@ ${selectedTextStr}
                           }
                         }}
                         disabled={isStoppingAnalysis || (isEvaluating && !activeAnalysisId)}
-                        className={`${isEvaluating ? "bg-rose-600 hover:bg-rose-700 active:bg-rose-800" : `bg-${activeColorBrand}-600 hover:bg-${activeColorBrand}-700`} text-white disabled:opacity-60 disabled:cursor-not-allowed font-extrabold text-xs px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer select-none whitespace-nowrap self-stretch sm:self-auto`}
+                        aria-label={isEvaluating ? (activeAnalysisId ? "停止分析" : "正在调度委员研判") : "下达指令"}
+                        title={isEvaluating ? (activeAnalysisId ? (isStoppingAnalysis ? "正在停止..." : "停止分析") : "正在调度委员研判...") : "下达指令"}
+                        className={`absolute bottom-3 right-3 h-9 w-9 rounded-xl ${isEvaluating ? "bg-rose-600 hover:bg-rose-700 active:bg-rose-800" : `bg-${activeColorBrand}-600 hover:bg-${activeColorBrand}-700`} text-white disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center transition-all shadow-md cursor-pointer select-none active:scale-95`}
                       >
                         {isEvaluating ? (
                           <>
@@ -2270,13 +2272,9 @@ ${selectedTextStr}
                             ) : (
                               <X className="w-3.5 h-3.5" />
                             )}
-                            <span>{activeAnalysisId ? (isStoppingAnalysis ? "正在停止..." : "停止分析") : "正在调度委员研判..."}</span>
                           </>
                         ) : (
-                          <>
-                            <span>下达指令</span>
-                            <Send className="w-3" />
-                          </>
+                          <Send className="w-3.5 h-3.5" />
                         )}
                       </button>
                     </div>
