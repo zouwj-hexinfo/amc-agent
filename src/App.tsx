@@ -24,6 +24,7 @@ import ReportViewer from "./components/ReportViewer";
 import { FilesDrawer, ExecutionDrawer } from "./components/LeftDrawers";
 import DocumentPreviewer from "./components/DocumentPreviewer";
 import SystemHomePage from "./components/SystemHomePage";
+import { currentBeijingDateTime, formatBeijingDateTime } from "./lib/time";
 
 export const THEME_COLOR_MAPS: Record<string, { bg: string, text: string, border: string, badge: string, iconBg: string, activeTab: string, primaryBtn: string, linkText: string, inputRing: string, accentBg: string }> = {
   indigo: { bg: "bg-indigo-50/40", text: "text-indigo-700", border: "border-indigo-100", badge: "bg-indigo-50 text-indigo-700 border-indigo-200", iconBg: "bg-indigo-500/10 text-indigo-600", activeTab: "bg-indigo-50 border border-indigo-200/80 text-indigo-700 font-bold shadow-3xs", primaryBtn: "bg-indigo-600 hover:bg-indigo-750 active:bg-indigo-850 text-white shadow-xs", linkText: "text-indigo-600 hover:text-indigo-800", inputRing: "focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25", accentBg: "bg-indigo-600 text-white" },
@@ -643,6 +644,7 @@ export default function App() {
   // Selected Report item for gallery
   const [selectedReportKey, setSelectedReportKey] = React.useState<string>('orchestrator');
   const [selectedReportIndex, setSelectedReportIndex] = React.useState<number>(0);
+  const [reportDisplayTab, setReportDisplayTab] = React.useState<'report' | 'agentTrace'>('report');
 
   // Paragraph selection, fine-tuning, and knowledge feedback tracking state
   const [selectedParagraphs, setSelectedParagraphs] = React.useState<string[]>([]);
@@ -747,7 +749,7 @@ export default function App() {
       user: userNickname || "Lucky Ding",
       userRole: userRole || "首席信批合规官",
       userAvatar: userAvatar || "LD",
-      timestamp: (record.updatedAt || new Date().toISOString()).replace('T', ' ').substring(0, 19),
+      timestamp: formatBeijingDateTime(record.updatedAt || new Date()),
       actionName: `[Hermes事件流] ${request}`,
       orchestratorMode: targetMode,
       agentType: record.metadata?.targetAgentKey || 'orchestrator',
@@ -763,7 +765,7 @@ export default function App() {
         { step: "5", title: "成果库封存与双向交付", desc: isCompleted ? "最终报告已写入项目成果目录" : "报告完成后将自动写入成果目录", status: stepStatus("5") },
       ],
       communicationTranscripts: [
-        buildUserInstructionBubble(request, (record.updatedAt || new Date().toISOString()).replace('T', ' ').substring(0, 19)),
+        buildUserInstructionBubble(request, formatBeijingDateTime(record.updatedAt || new Date())),
         {
           senderName: "Hermes Agent",
           senderRole: isCompleted ? "任务完成" : isStopped ? "用户停止" : isFailed ? "任务异常" : isWaiting ? "等待授权" : "运行恢复",
@@ -1466,7 +1468,7 @@ export default function App() {
     eventInstruction: string,
     options?: { status?: ExecutionEvent['status']; planningOnly?: boolean },
   ): ExecutionEvent => {
-    const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampStr = currentBeijingDateTime();
     const planningOnly = Boolean(options?.planningOnly);
     return {
       id: eventId,
@@ -1603,6 +1605,7 @@ export default function App() {
 
     const submittedInstruction = instructionText.trim();
     setInstructionText("");
+    setReportDisplayTab('agentTrace');
 
     if (orchestratorMode !== 'discuss') {
       const eventId = `evt-live-${Date.now()}`;
@@ -2262,6 +2265,8 @@ ${selectedTextStr}
                 {/* 1. MAIN OUTCOMES VIEW: Using modular ReportViewer */}
                 <ReportViewer
                   currentProject={currentProject}
+                  displayTab={reportDisplayTab}
+                  setDisplayTab={setReportDisplayTab}
                   selectedReportKey={selectedReportKey}
                   setSelectedReportKey={setSelectedReportKey}
                   selectedReportIndex={selectedReportIndex}
@@ -2832,6 +2837,7 @@ ${selectedTextStr}
           setSelectedReportKey={(key) => {
             setSelectedReportKey(key);
             setSelectedReportIndex(0);
+            setReportDisplayTab('report');
           }}
           setSelectedReportIndex={setSelectedReportIndex}
           currentTheme={currentTheme}

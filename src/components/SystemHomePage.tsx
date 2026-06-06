@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { AMCProject, ProjectType } from "../types";
 import { motion } from "motion/react";
+import { formatBeijingDate } from "../lib/time";
 
 interface SystemHomePageProps {
   projects: AMCProject[];
@@ -476,7 +477,7 @@ export default function SystemHomePage({
                 <div className="flex items-center justify-between border-t border-slate-100/90 pt-3 mt-1.5 text-[10px] text-slate-400 font-semibold bg-white">
                   <div className="flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-slate-400" />
-                    <span>更新：{proj.updatedAt ? new Date(proj.updatedAt).toLocaleDateString() : "未知时间"}</span>
+                    <span>更新：{formatBeijingDate(proj.updatedAt)}</span>
                   </div>
                   <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-50 border border-slate-100 text-slate-500 font-bold">
                     <span>📄 成果库版本:</span>
@@ -545,7 +546,7 @@ export default function SystemHomePage({
                         {proj.totalDebt ? `${proj.totalDebt.toLocaleString()} 万元` : "暂未披露"}
                       </td>
                       <td className="py-4 px-4 text-slate-400 font-bold">
-                        {proj.updatedAt ? new Date(proj.updatedAt).toLocaleDateString() : "未知"}
+                        {formatBeijingDate(proj.updatedAt, "未知")}
                       </td>
                       <td className="py-4 px-4 text-center">
                         <span className={`inline-block text-[9.5px] font-extrabold px-2 py-0.5 rounded-full ${

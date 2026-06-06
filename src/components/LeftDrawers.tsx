@@ -5,6 +5,7 @@ import {
   Clock, Activity, RefreshCw, MessageCircle, Search, User, AlertCircle
 } from "lucide-react";
 import { AMCProject, ExecutionEvent } from "../types";
+import { formatBeijingDateTime, formatBeijingTime } from "../lib/time";
 
 interface FilesDrawerProps {
   isOpen: boolean;
@@ -494,7 +495,7 @@ export function ExecutionDrawer({
                               </div>
                             </div>
                             <span className="text-[9px] text-slate-400 font-medium font-mono shrink-0 whitespace-nowrap">
-                              {evt.timestamp?.substring(11, 19) || evt.timestamp}
+                              {formatBeijingTime(evt.timestamp, evt.timestamp || "", { seconds: true, assumePlainTimestampAsUtc: true })}
                             </span>
                           </div>
 
@@ -555,7 +556,9 @@ export function ExecutionDrawer({
                           本次评估指令与要素排查
                         </span>
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-slate-500 font-mono font-medium">{activeEvent.timestamp}</span>
+                          <span className="text-[10px] text-slate-500 font-mono font-medium">
+                            {formatBeijingDateTime(activeEvent.timestamp, activeEvent.timestamp || "", { assumePlainTimestampAsUtc: true })}
+                          </span>
                         </div>
                       </div>
                       

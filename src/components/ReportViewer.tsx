@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { EvaluationRecord, AMCProject, ExecutionEvent, CommunicationBubble } from "../types";
 import MarkdownRenderer from "./MarkdownRenderer";
+import { formatBeijingTime } from "../lib/time";
 
 const getThemeColorName = (themeObj: any): string => {
   if (!themeObj) return "indigo";
@@ -148,7 +149,7 @@ function AgentTraceTimeline({
                     <div className="min-w-0">
                       <div className="truncate text-[11px] font-extrabold text-slate-900">{event.actionName}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate-400">
-                        <span>{event.timestamp}</span>
+                        <span>{formatBeijingTime(event.timestamp, event.timestamp || "", { seconds: true, assumePlainTimestampAsUtc: true })}</span>
                         <span>{event.orchestratorMode === 'single' ? '指定专家' : event.orchestratorMode === 'chain' ? '顺序执行' : '智能规划'}</span>
                         <span>{transcriptCount} 条消息</span>
                         {shortAnalysisId && <span className="font-mono">analysis {shortAnalysisId}</span>}
@@ -449,6 +450,8 @@ type TuningSuggestion = { label: string; text: string };
 
 interface ReportViewerProps {
   currentProject: AMCProject;
+  displayTab: 'report' | 'agentTrace';
+  setDisplayTab: (tab: 'report' | 'agentTrace') => void;
   selectedReportKey: string;
   setSelectedReportKey: (key: string) => void;
   selectedReportIndex: number;
@@ -478,6 +481,8 @@ interface ReportViewerProps {
 
 export default function ReportViewer({
   currentProject,
+  displayTab,
+  setDisplayTab,
   selectedReportKey,
   setSelectedReportKey,
   selectedReportIndex,
@@ -506,7 +511,6 @@ export default function ReportViewer({
 }: ReportViewerProps) {
 
   const [showRevisionList, setShowRevisionList] = React.useState(false);
-  const [displayTab, setDisplayTab] = React.useState<'report' | 'agentTrace'>('report');
   const [tuningSuggestions, setTuningSuggestions] = React.useState<TuningSuggestion[]>([]);
   const [isLoadingTuningSuggestions, setIsLoadingTuningSuggestions] = React.useState(false);
 
@@ -698,7 +702,7 @@ export default function ReportViewer({
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-slate-800 font-bold">V{rec.version}.0 {rec.orchestrationMode !== "single" ? "联合" : "单项"}</div>
-                      <div className="text-[9px] text-slate-400 font-medium font-sans mt-0.5 truncate">{new Date(rec.createdAt).toLocaleTimeString([], {hour: "2-digit", minute:"2-digit"})}</div>
+                      <div className="text-[9px] text-slate-400 font-medium font-sans mt-0.5 truncate">{formatBeijingTime(rec.createdAt)}</div>
                     </div>
                   </button>
                 );
@@ -892,7 +896,7 @@ export default function ReportViewer({
                             修订案 #{projectRevs.length - index}
                           </span>
                           <span className="text-[9px] text-slate-400 font-mono select-none">
-                            {new Date(rev.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            {formatBeijingTime(rev.createdAt)}
                           </span>
                         </div>
 
