@@ -1523,7 +1523,6 @@ export default function App() {
     setActiveExecutionEventId(null);
     setEvalSuccessMessage(null);
     setWorkspaceSubTab('execution');
-    setIsLeftExecOpen(true); // Auto open execution logs drawer on left
 
     const selectedSkills = currentSelectedWorkItem?.definition.skills || [];
 
@@ -1603,6 +1602,7 @@ export default function App() {
     if (!currentProject || isPlanningInstruction) return;
 
     const submittedInstruction = instructionText.trim();
+    setInstructionText("");
 
     if (orchestratorMode !== 'discuss') {
       const eventId = `evt-live-${Date.now()}`;
@@ -1620,7 +1620,6 @@ export default function App() {
     setActiveExecutionEventId(null);
     setEvalSuccessMessage(null);
     setWorkspaceSubTab('execution');
-    setIsLeftExecOpen(true);
 
     if (planningClarificationContext) {
       addExecutionBubble(eventId, buildUserInstructionBubble(submittedInstruction || "补充智能规划所需信息"));
@@ -1693,7 +1692,6 @@ export default function App() {
           communicationTranscripts: [...evt.communicationTranscripts, plannerBubble],
         } : evt));
         addToast("智能规划需要补充信息，已在执行记录中提出反问。", "info");
-        setInstructionText("");
         return;
       }
 
@@ -2424,6 +2422,12 @@ ${selectedTextStr}
                       <textarea
                         value={instructionText}
                         onChange={(e) => setInstructionText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                          e.preventDefault();
+                          if (isEvaluating || isPlanningInstruction || isStoppingAnalysis) return;
+                          void handleSubmitInstruction();
+                        }}
                         placeholder="请输入本次特别审议的专家意见指引（例如：‘请法务专家核实债务人多头诉讼，限缩抵押率安全线’），系统将对智能研判做重点对准修正，不填则默认标准规划输出..."
                         className="instruction-input-scrollbar-hidden w-full text-xs font-medium text-slate-700 bg-slate-50/55 hover:bg-slate-50/80 focus:bg-white p-3 pr-14 pb-12 border border-slate-200 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 rounded-xl transition-all h-24 resize-none leading-relaxed text-left"
                       />
@@ -2434,9 +2438,8 @@ ${selectedTextStr}
                             void handleStopActiveAnalysis();
                           } else if (!isPlanningInstruction) {
                             void handleSubmitInstruction();
-                            setIsLeftExecOpen(true); // Automatically open the Left Execution Records Drawer!
                           } else {
-                            setIsLeftExecOpen(true);
+                            setWorkspaceSubTab('execution');
                           }
                         }}
                         disabled={isStoppingAnalysis || isPlanningInstruction || (isEvaluating && !activeAnalysisId)}
