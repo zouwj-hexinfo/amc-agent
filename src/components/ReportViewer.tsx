@@ -262,18 +262,21 @@ function AgentTraceBubble({
   currentTheme: any;
   brand: string;
 }) {
-  const color = hexMap[brand] || hexMap.indigo;
   const isUser = bubble.bubbleType === 'user';
   const isTool = bubble.senderName.includes('工具') || bubble.senderRole.toLowerCase().includes('tool');
   const displayTime = bubble.timestamp === '刚刚'
     ? formatBeijingTime(new Date(), '未知', { seconds: true })
     : formatBeijingTime(bubble.timestamp, bubble.timestamp || '未知', { seconds: true, assumePlainTimestampAsUtc: true });
+  const compactContent = bubble.content
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   let themeBg = "border-slate-200 bg-white";
   if (bubble.bubbleType === 'lawyer') themeBg = `${currentTheme?.badge || "bg-indigo-50/40 border-indigo-100/60"}`;
   else if (bubble.bubbleType === 'valuer') themeBg = "border-emerald-100 bg-emerald-50/30";
   else if (bubble.bubbleType === 'risk') themeBg = "border-amber-100 bg-amber-50/30";
   else if (bubble.bubbleType === 'leader') themeBg = "border-slate-200 bg-slate-50";
-  else if (isUser) themeBg = "border-slate-300 bg-slate-900 text-white";
+  else if (isUser) themeBg = "border-indigo-200 bg-indigo-50 text-slate-800";
 
   return (
     <div className={`flex gap-2.5 ${isUser ? "justify-end" : "justify-start"}`}>
@@ -288,12 +291,11 @@ function AgentTraceBubble({
           <span className="font-mono text-slate-400">{displayTime}</span>
         </div>
         <div
-          className={`agent-trace-markdown rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed shadow-3xs ${
+          className={`agent-trace-markdown ${isUser ? "agent-trace-markdown-user" : ""} rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed shadow-3xs ${
             isUser ? "rounded-tr-sm" : "rounded-tl-sm"
           } ${themeBg}`}
-          style={isUser ? { backgroundColor: color.dark, borderColor: color.dark } : undefined}
         >
-          <MarkdownRenderer content={bubble.content} />
+          <MarkdownRenderer content={compactContent} />
         </div>
       </div>
       {isUser && (

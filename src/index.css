@@ -29,7 +29,7 @@ body {
 .agent-trace-markdown h2,
 .agent-trace-markdown h3,
 .agent-trace-markdown h4 {
-  margin: 0.35rem 0 0.25rem;
+  margin: 0.2rem 0 0.12rem;
   border-bottom: 0;
   padding-bottom: 0;
   font-size: 0.78rem;
@@ -41,26 +41,73 @@ body {
 .agent-trace-markdown blockquote,
 .agent-trace-markdown table {
   font-size: 0.6875rem;
-  line-height: 1.65;
+  line-height: 1.45;
 }
 
 .agent-trace-markdown p {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.15rem;
 }
 
 .agent-trace-markdown ul,
 .agent-trace-markdown ol {
   margin-left: 1rem;
+  margin-top: 0.15rem;
+  margin-bottom: 0.15rem;
+  gap: 0;
 }
 
 .agent-trace-markdown pre {
-  margin: 0.45rem 0;
+  margin: 0.25rem 0;
   padding: 0.65rem;
   font-size: 0.68rem;
+}
+
+.agent-trace-markdown blockquote {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+
+.agent-trace-markdown > div {
+  margin-top: 0.1rem;
+  margin-bottom: 0.1rem;
+}
+
+.agent-trace-markdown > div:empty,
+.agent-trace-markdown .h-2 {
+  height: 0.125rem;
 }
 
 .agent-trace-markdown table th,
 .agent-trace-markdown table td {
   padding: 0.35rem 0.5rem;
   font-size: 0.68rem;
+}
+
+.agent-trace-markdown-user,
+.agent-trace-markdown-user p,
+.agent-trace-markdown-user li,
+.agent-trace-markdown-user h1,
+.agent-trace-markdown-user h2,
+.agent-trace-markdown-user h3,
+.agent-trace-markdown-user h4,
+.agent-trace-markdown-user blockquote,
+.agent-trace-markdown-user table,
+.agent-trace-markdown-user td,
+.agent-trace-markdown-user th {
+  color: #1e293b;
+}
+
+.agent-trace-markdown-user strong {
+  color: #0f172a;
+}
+
+.agent-trace-markdown-user code {
+  background: #e0e7ff;
+  color: #312e81;
+}
+
+.agent-trace-markdown-user a {
+  color: #4338ca;
 }
