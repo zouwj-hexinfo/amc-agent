@@ -24,3 +24,43 @@ body {
 .instruction-input-scrollbar-hidden::-webkit-scrollbar {
   display: none;
 }
+
+.agent-trace-markdown h1,
+.agent-trace-markdown h2,
+.agent-trace-markdown h3,
+.agent-trace-markdown h4 {
+  margin: 0.35rem 0 0.25rem;
+  border-bottom: 0;
+  padding-bottom: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.agent-trace-markdown p,
+.agent-trace-markdown li,
+.agent-trace-markdown blockquote,
+.agent-trace-markdown table {
+  font-size: 0.6875rem;
+  line-height: 1.65;
+}
+
+.agent-trace-markdown p {
+  margin-bottom: 0.35rem;
+}
+
+.agent-trace-markdown ul,
+.agent-trace-markdown ol {
+  margin-left: 1rem;
+}
+
+.agent-trace-markdown pre {
+  margin: 0.45rem 0;
+  padding: 0.65rem;
+  font-size: 0.68rem;
+}
+
+.agent-trace-markdown table th,
+.agent-trace-markdown table td {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.68rem;
+}

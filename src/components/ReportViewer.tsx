@@ -265,6 +265,9 @@ function AgentTraceBubble({
   const color = hexMap[brand] || hexMap.indigo;
   const isUser = bubble.bubbleType === 'user';
   const isTool = bubble.senderName.includes('工具') || bubble.senderRole.toLowerCase().includes('tool');
+  const displayTime = bubble.timestamp === '刚刚'
+    ? formatBeijingTime(new Date(), '未知', { seconds: true })
+    : formatBeijingTime(bubble.timestamp, bubble.timestamp || '未知', { seconds: true, assumePlainTimestampAsUtc: true });
   let themeBg = "border-slate-200 bg-white";
   if (bubble.bubbleType === 'lawyer') themeBg = `${currentTheme?.badge || "bg-indigo-50/40 border-indigo-100/60"}`;
   else if (bubble.bubbleType === 'valuer') themeBg = "border-emerald-100 bg-emerald-50/30";
@@ -281,16 +284,16 @@ function AgentTraceBubble({
       )}
       <div className={`min-w-0 ${isUser ? "max-w-[82%]" : "max-w-[92%]"} space-y-1`}>
         <div className={`flex flex-wrap items-center gap-2 text-[10px] font-bold ${isUser ? "justify-end text-slate-400" : "text-slate-500"}`}>
-          <span>{bubble.senderName} · {bubble.senderRole}</span>
-          <span className="font-mono text-slate-400">{bubble.timestamp}</span>
+          <span>{bubble.senderName}</span>
+          <span className="font-mono text-slate-400">{displayTime}</span>
         </div>
         <div
-          className={`rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed shadow-3xs whitespace-pre-wrap ${
+          className={`agent-trace-markdown rounded-xl border px-3 py-2.5 text-[11px] leading-relaxed shadow-3xs ${
             isUser ? "rounded-tr-sm" : "rounded-tl-sm"
           } ${themeBg}`}
           style={isUser ? { backgroundColor: color.dark, borderColor: color.dark } : undefined}
         >
-          {bubble.content}
+          <MarkdownRenderer content={bubble.content} />
         </div>
       </div>
       {isUser && (
