@@ -68,6 +68,37 @@ type AgentTraceScrollState = {
   latestMessageSignature: string;
 };
 
+const HIDDEN_AGENT_TRACE_EVENT_TYPES = new Set([
+  'hermes.run.started',
+  'hermes.tool.progress',
+  'agent.started',
+  'agent.progress',
+  'analysis.completed',
+]);
+
+function isMeaningfulAgentTraceBubble(bubble: CommunicationBubble) {
+  if (bubble.bubbleType === 'user') return true;
+  if (bubble.sourceEventType) return !HIDDEN_AGENT_TRACE_EVENT_TYPES.has(bubble.sourceEventType);
+  if (bubble.senderName.includes('工具') || /tool/i.test(bubble.senderRole)) return false;
+  if (bubble.senderRole === '流程闭环') return false;
+  if (bubble.senderRole === '远端多Agent运行器' || bubble.senderRole === '专家智能体') return false;
+  if (/工具执行完成|Hermes run 已启动/.test(bubble.content)) return false;
+  return true;
+}
+
+function visibleAgentTraceEvents(events: ExecutionEvent[]) {
+  return events
+    .map(event => ({
+      ...event,
+      communicationTranscripts: event.communicationTranscripts.filter(isMeaningfulAgentTraceBubble),
+    }))
+    .filter(event => event.communicationTranscripts.length > 0);
+}
+
+function countMeaningfulAgentTraceMessages(events: ExecutionEvent[]) {
+  return events.reduce((sum, event) => sum + event.communicationTranscripts.filter(isMeaningfulAgentTraceBubble).length, 0);
+}
+
 function AgentTraceTimeline({
   events,
   currentTheme,
@@ -82,8 +113,10 @@ function AgentTraceTimeline({
   const color = hexMap[brand] || hexMap.indigo;
   const scrollBodyRef = React.useRef<HTMLDivElement | null>(null);
   const bottomAnchorRef = React.useRef<HTMLDivElement | null>(null);
+  const visibleEvents = React.useMemo(() => visibleAgentTraceEvents(events), [events]);
+  const visibleMessageCount = React.useMemo(() => countMeaningfulAgentTraceMessages(events), [events]);
   const latestMessageSignature = React.useMemo(
-    () => events.map(event => {
+    () => visibleEvents.map(event => {
       const lastBubble = event.communicationTranscripts[event.communicationTranscripts.length - 1];
       return [
         event.id,
@@ -94,7 +127,7 @@ function AgentTraceTimeline({
         lastBubble?.content.length || 0,
       ].join(":");
     }).join("|"),
-    [events]
+    [visibleEvents]
   );
 
   React.useLayoutEffect(() => {
@@ -110,7 +143,7 @@ function AgentTraceTimeline({
     scrollStateRef.current.latestMessageSignature = latestMessageSignature;
   }, [latestMessageSignature, scrollStateRef]);
 
-  if (events.length === 0) {
+  if (visibleEvents.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center shadow-2xs select-none">
         <MessageCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
@@ -137,7 +170,7 @@ function AgentTraceTimeline({
           </div>
         </div>
         <div className="mt-2 text-[10px] font-bold text-slate-400 sm:mt-0 sm:text-right">
-          {events.length} 次执行 · {events.reduce((sum, event) => sum + event.communicationTranscripts.length, 0)} 条通信
+          {visibleEvents.length} 次执行 · {visibleMessageCount} 条有效通信
         </div>
       </div>
 
@@ -149,7 +182,7 @@ function AgentTraceTimeline({
         className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 px-3 py-4 sm:px-5"
       >
         <div className="space-y-5">
-        {events.map(event => {
+        {visibleEvents.map(event => {
           const hasTranscripts = event.communicationTranscripts.length > 0;
           const statusColor = event.status === 'failed'
             ? '#ef4444'
@@ -666,7 +699,7 @@ export default function ReportViewer({
           <ReportDisplayTabButton
             active={displayTab === 'agentTrace'}
             label="智能体对话记录"
-            count={projectExecutionEvents.reduce((count, event) => count + event.communicationTranscripts.length, 0)}
+            count={countMeaningfulAgentTraceMessages(projectExecutionEvents)}
             icon={<MessageCircle className="w-3.5 h-3.5" />}
             brand={brand}
             onClick={() => setDisplayTab('agentTrace')}

@@ -290,6 +290,7 @@ export interface CommunicationBubble {
   timestamp: string;
   content: string;
   bubbleType?: string; // e.g. 'lawyer', 'valuer', 'risk', 'leader'
+  sourceEventType?: string;
 }
 
 export interface ExecutionEvent {

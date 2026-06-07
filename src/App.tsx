@@ -1161,33 +1161,34 @@ export default function App() {
 
   const bubbleForHermesEvent = (event: any): CommunicationBubble | null => {
     const now = "刚刚";
+    const withSource = (bubble: CommunicationBubble): CommunicationBubble => ({ ...bubble, sourceEventType: event.type });
     switch (event.type) {
       case 'hermes.run.started':
-        return { senderName: "Hermes Agent", senderRole: "远端多Agent运行器", senderAvatar: "H", timestamp: now, content: `Hermes run 已启动：${event.runId || 'pending'}，状态 ${event.status || 'running'}。`, bubbleType: 'leader' };
+        return withSource({ senderName: "Hermes Agent", senderRole: "远端多Agent运行器", senderAvatar: "H", timestamp: now, content: `Hermes run 已启动：${event.runId || 'pending'}，状态 ${event.status || 'running'}。`, bubbleType: 'leader' });
       case 'plan.created':
-        return { senderName: "评估编排器", senderRole: "任务规划", senderAvatar: "编", timestamp: now, content: event.plan || "Hermes 已创建AMC评估计划。", bubbleType: 'leader' };
+        return withSource({ senderName: "评估编排器", senderRole: "任务规划", senderAvatar: "编", timestamp: now, content: event.plan || "Hermes 已创建AMC评估计划。", bubbleType: 'leader' });
       case 'agent.started':
-        return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "专家智能体", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.action || "开始执行专家审查任务。", bubbleType: hermesAgentBubbleType(event.agentId) };
+        return withSource({ senderName: hermesAgentDisplayName(event.agentId), senderRole: "专家智能体", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.action || "开始执行专家审查任务。", bubbleType: hermesAgentBubbleType(event.agentId) });
       case 'agent.progress':
-        return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "专家智能体", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: `${event.action || "正在处理"}${event.snippet ? `：${event.snippet}` : ''}`, bubbleType: hermesAgentBubbleType(event.agentId) };
+        return withSource({ senderName: hermesAgentDisplayName(event.agentId), senderRole: "专家智能体", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: `${event.action || "正在处理"}${event.snippet ? `：${event.snippet}` : ''}`, bubbleType: hermesAgentBubbleType(event.agentId) });
       case 'hermes.output.delta':
-        return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "报告流式输出", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.text || "正在生成报告正文。", bubbleType: hermesAgentBubbleType(event.agentId) };
+        return withSource({ senderName: hermesAgentDisplayName(event.agentId), senderRole: "报告流式输出", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.text || "正在生成报告正文。", bubbleType: hermesAgentBubbleType(event.agentId) });
       case 'hermes.tool.progress':
-        return { senderName: "Hermes 工具执行器", senderRole: event.toolName || "Tool", senderAvatar: "T", timestamp: now, content: event.label || "工具调用完成。", bubbleType: 'leader' };
+        return withSource({ senderName: "Hermes 工具执行器", senderRole: event.toolName || "Tool", senderAvatar: "T", timestamp: now, content: event.label || "工具调用完成。", bubbleType: 'leader' });
       case 'artifact.created':
-        return { senderName: hermesAgentDisplayName(event.agentId), senderRole: "成果产物", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.label || "Hermes 已生成阶段性产物。", bubbleType: hermesAgentBubbleType(event.agentId) };
+        return withSource({ senderName: hermesAgentDisplayName(event.agentId), senderRole: "成果产物", senderAvatar: hermesAgentAvatar(event.agentId), timestamp: now, content: event.label || "Hermes 已生成阶段性产物。", bubbleType: hermesAgentBubbleType(event.agentId) });
       case 'amc.report.generated':
-        return { senderName: "评估编排器", senderRole: "报告生成", senderAvatar: "编", timestamp: now, content: "Hermes 已产出最终报告正文，正在写入项目成果目录。", bubbleType: 'leader' };
+        return withSource({ senderName: "评估编排器", senderRole: "报告生成", senderAvatar: "编", timestamp: now, content: "Hermes 已产出最终报告正文，正在写入项目成果目录。", bubbleType: 'leader' });
       case 'analysis.completed':
-        return { senderName: "评估编排器", senderRole: "流程闭环", senderAvatar: "编", timestamp: now, content: "真实 Hermes 多Agent事件流已完成，成果已写入项目报告目录。", bubbleType: 'leader' };
+        return withSource({ senderName: "评估编排器", senderRole: "流程闭环", senderAvatar: "编", timestamp: now, content: "真实 Hermes 多Agent事件流已完成，成果已写入项目报告目录。", bubbleType: 'leader' });
       case 'analysis.failed':
         if (isUserStoppedAnalysisEvent(event)) {
-          return { senderName: "Hermes Agent", senderRole: "用户停止", senderAvatar: "■", timestamp: now, content: event.message || "用户已停止 Hermes Agent 分析。", bubbleType: 'leader' };
+          return withSource({ senderName: "Hermes Agent", senderRole: "用户停止", senderAvatar: "■", timestamp: now, content: event.message || "用户已停止 Hermes Agent 分析。", bubbleType: 'leader' });
         }
-        return { senderName: "Hermes Agent", senderRole: "运行失败", senderAvatar: "!", timestamp: now, content: event.message || "Hermes Agent 运行失败。", bubbleType: 'leader' };
+        return withSource({ senderName: "Hermes Agent", senderRole: "运行失败", senderAvatar: "!", timestamp: now, content: event.message || "Hermes Agent 运行失败。", bubbleType: 'leader' });
       case 'analysis.stream_interrupted':
       case 'analysis.requires_action':
-        return { senderName: "Hermes Agent", senderRole: "需要处理", senderAvatar: "!", timestamp: now, content: event.message || "Hermes 事件流需要人工处理。", bubbleType: 'leader' };
+        return withSource({ senderName: "Hermes Agent", senderRole: "需要处理", senderAvatar: "!", timestamp: now, content: event.message || "Hermes 事件流需要人工处理。", bubbleType: 'leader' });
       default:
         return null;
     }
