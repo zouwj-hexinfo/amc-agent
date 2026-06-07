@@ -106,8 +106,8 @@ function AgentTraceTimeline({
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
-      <div className="border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
+      <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
             <TerminalSquare className="h-3.5 w-3.5" style={{ color: color.base }} />
@@ -124,7 +124,7 @@ function AgentTraceTimeline({
         </div>
       </div>
 
-      <div className="bg-slate-50/70 px-3 py-4 sm:px-5">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 px-3 py-4 sm:px-5">
         <div className="space-y-5">
         {events.map(event => {
           const hasTranscripts = event.communicationTranscripts.length > 0;
@@ -645,7 +645,7 @@ export default function ReportViewer({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className={`min-h-0 flex-1 pr-1 ${displayTab === 'agentTrace' ? "overflow-hidden" : "overflow-y-auto"}`}>
         {displayTab === 'agentTrace' ? (
           <AgentTraceTimeline
             events={projectExecutionEvents}
