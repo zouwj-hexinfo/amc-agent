@@ -5,7 +5,7 @@ import {
   BookOpen, Terminal, ClipboardCheck, ArrowRight, CheckCircle2, 
   Clock, AlertTriangle, FileText, Upload, ChevronRight, ChevronLeft, Activity, 
   HelpCircle, ThumbsUp, RefreshCw, Layers, User, LogOut, Settings, ChevronDown, Paperclip, Send,
-  Wand2, Copy, Check, MessageSquare, X
+  Wand2, Copy, Check, MessageSquare, Square, X
 } from "lucide-react";
 
 import { 
@@ -481,6 +481,25 @@ const INITIAL_EXECUTION_EVENTS: ExecutionEvent[] = [
     ]
   }
 ];
+
+type ResolvedRuntimeResponse = {
+  source?: string;
+  domainId?: string;
+  domainName?: string;
+  roleId?: string;
+  roleName?: string;
+  workItemId?: string;
+  workItemName?: string;
+};
+
+function formatResolvedRuntime(runtime?: ResolvedRuntimeResponse | null) {
+  if (!runtime) return "";
+  if (runtime.roleName && runtime.workItemName) return `实际执行配置：${runtime.roleName} / ${runtime.workItemName}`;
+  if (runtime.roleName) return `实际执行配置：${runtime.roleName}`;
+  if (runtime.source === 'chain') return "实际执行配置：顺序执行固定链路，不锁定单一工作项";
+  if (runtime.source === 'orchestrator') return "实际执行配置：中枢编排器统筹执行";
+  return "";
+}
 
 export default function App() {
   const [projects, setProjects] = React.useState<AMCProject[]>([]);
@@ -1546,6 +1565,8 @@ export default function App() {
       const data = await res.json();
       if (res.ok && data.success && data.analysisId) {
         const targetAgentKey = orchestratorMode !== 'single' ? 'orchestrator' : selectedAgent;
+        const resolvedRuntime = data.resolvedRuntime as ResolvedRuntimeResponse | undefined;
+        const resolvedRuntimeLine = formatResolvedRuntime(resolvedRuntime);
         setActiveAnalysisId(data.analysisId);
         setActiveExecutionEventId(eventId);
         setExecutionEvents(prev => prev.map(evt => {
@@ -1560,7 +1581,14 @@ export default function App() {
             runId: data.runId,
             communicationTranscripts: [
               ...evt.communicationTranscripts,
-              { senderName: "Hermes Agent", senderRole: "远端多Agent运行器", senderAvatar: "H", timestamp: "刚刚", content: `真实 Hermes 任务已创建，analysisId=${data.analysisId}，正在订阅事件流。`, bubbleType: 'leader' }
+              {
+                senderName: "Hermes Agent",
+                senderRole: "远端多Agent运行器",
+                senderAvatar: "H",
+                timestamp: "刚刚",
+                content: [`真实 Hermes 任务已创建，analysisId=${data.analysisId}，正在订阅事件流。`, resolvedRuntimeLine].filter(Boolean).join('\n'),
+                bubbleType: 'leader',
+              }
             ],
           };
         }));
@@ -1666,6 +1694,15 @@ export default function App() {
       }
 
       const intent = data.intent as InstructionIntentResult;
+      const recommendedRole = intent.recommendedRoleId
+        ? agentConfigBundle.roles.find(role => role.id === intent.recommendedRoleId)
+        : null;
+      const recommendedWorkItem = intent.recommendedWorkItemId
+        ? agentConfigBundle.workItems.find(item => item.id === intent.recommendedWorkItemId)
+        : null;
+      const recommendationLine = intent.decision === 'start_evaluation' && (recommendedRole || recommendedWorkItem)
+        ? `推荐执行配置：${recommendedRole?.name || "待确认专家"} / ${recommendedWorkItem?.name || "待确认工作项"}`
+        : "";
       const plannerBubble: CommunicationBubble = {
         senderName: "智能规划助手",
         senderRole: intent.decision === 'ask_clarification' ? "需要补充" : intent.decision === 'reply_only' ? "仅回复" : "意图理解",
@@ -1673,7 +1710,7 @@ export default function App() {
         timestamp: "刚刚",
         content: intent.decision === 'ask_clarification'
           ? (intent.clarificationQuestion || intent.reply)
-          : `${intent.summary}\n\n${intent.reply}`,
+          : [intent.summary, recommendationLine, intent.reply].filter(Boolean).join('\n\n'),
         bubbleType: 'leader',
       };
 
@@ -2309,10 +2346,10 @@ ${selectedTextStr}
 	                      <button
 	                        type="button"
 	                        onClick={() => setIsCollabConsoleOpen(prev => !prev)}
-	                        className={`text-[10.5px] font-extrabold px-3 py-1 rounded-full border hover:bg-opacity-90 active:scale-98 transition-all flex items-center gap-1.5 shadow-3xs cursor-pointer select-none ${currentTheme.badge}`}
+	                        className={`max-w-[360px] truncate text-[10.5px] font-extrabold px-3 py-1 rounded-full border hover:bg-opacity-90 active:scale-98 transition-all flex items-center gap-1.5 shadow-3xs cursor-pointer select-none ${currentTheme.badge}`}
 	                      >
 	                        {orchestratorMode === 'discuss' ? "🤖 智能规划 (按意图调用)" : 
-	                         orchestratorMode === 'single' ? `👤 指定专家 (${currentSelectedRole?.name || "法务合规岗"})` :
+	                         orchestratorMode === 'single' ? `👤 指定专家 (${currentSelectedRole?.name || "法务合规岗"} / ${currentSelectedWorkItem?.name || "默认工作项"})` :
 	                         "⛓️ 顺序执行 (固定流程)"}
 	                      </button>
 	                      {isCollabConsoleOpen && (
@@ -2390,6 +2427,35 @@ ${selectedTextStr}
 	                                    );
 	                                  })}
 	                                </div>
+	                                <label className="block pt-1 text-[9px] font-extrabold uppercase tracking-wider text-slate-400">工作项选择</label>
+	                                {currentRoleWorkItems.length ? (
+	                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+	                                    {currentRoleWorkItems.map(item => {
+	                                      const isSelected = currentSelectedWorkItem?.id === item.id;
+	                                      return (
+	                                        <button
+	                                          key={item.id}
+	                                          type="button"
+	                                          onClick={() => setSelectedAgentWorkItemId(item.id)}
+	                                          className={`rounded-lg border px-2.5 py-2 text-left transition-all ${
+	                                            isSelected
+	                                              ? `${currentTheme.accentBg} border-transparent shadow-3xs`
+	                                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+	                                          }`}
+	                                        >
+	                                          <div className="line-clamp-1 text-[11px] font-extrabold">{item.name}</div>
+	                                          <div className={`mt-0.5 line-clamp-2 text-[8.5px] font-semibold leading-snug ${isSelected ? "text-white/80" : "text-slate-400"}`}>
+	                                            {item.description || "使用该工作项定义、知识资产与成果模板执行"}
+	                                          </div>
+	                                        </button>
+	                                      );
+	                                    })}
+	                                  </div>
+	                                ) : (
+	                                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] font-semibold text-amber-800">
+	                                    当前专家暂无可用工作项，请先在智能体配置中维护。
+	                                  </div>
+	                                )}
 	                              </div>
 	                            ) : (
 	                              <div className="space-y-1.5 text-left animate-in fade-in duration-150">
@@ -2459,7 +2525,7 @@ ${selectedTextStr}
                             {isStoppingAnalysis ? (
                               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              <X className="w-3.5 h-3.5" />
+                              <Square className="w-3.5 h-3.5" />
                             )}
                           </>
                         ) : (

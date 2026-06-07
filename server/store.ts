@@ -47,6 +47,15 @@ export type AnalysisRecord = {
     agentRoleId?: string;
     agentWorkItemId?: string;
     agentWorkItemDefinition?: AgentWorkItemDefinition;
+    resolvedRuntime?: {
+      source: 'intent' | 'manual' | 'chain' | 'orchestrator';
+      domainId?: string;
+      domainName?: string;
+      roleId?: string;
+      roleName?: string;
+      workItemId?: string;
+      workItemName?: string;
+    };
     instructionIntent?: InstructionIntentResult;
   };
   state: AmcEvaluationState | null;

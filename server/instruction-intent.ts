@@ -7,6 +7,8 @@ type IntentPromptInput = {
   domain?: AgentDomain | null;
   role?: AgentRole | null;
   workItem?: AgentWorkItem | null;
+  candidateRoles?: AgentRole[];
+  candidateWorkItems?: AgentWorkItem[];
   clarificationContext?: InstructionClarificationContext | null;
 };
 
@@ -25,6 +27,18 @@ export function buildInstructionIntentPrompt(input: IntentPromptInput) {
   const businessFields = input.project.businessFields
     ? Object.entries(input.project.businessFields).map(([key, value]) => `${key}: ${String(value)}`).join('\n')
     : '无';
+  const roleById = new Map((input.candidateRoles || []).map(role => [role.id, role]));
+  const candidateWorkItems = (input.candidateWorkItems || []).map(item => {
+    const role = roleById.get(item.roleId);
+    return [
+      `- 工作项ID：${item.id}`,
+      `  名称：${item.name}`,
+      `  岗位专家ID：${item.roleId}`,
+      role ? `  岗位专家：${role.name}（${role.agentType}）` : '',
+      item.description ? `  说明：${item.description}` : '',
+      item.definition?.workSteps?.length ? `  工作定义：${item.definition.workSteps.join('；')}` : '',
+    ].filter(Boolean).join('\n');
+  }).join('\n');
 
   return [
     '你是 AMC 工作台的智能规划前置助手。你的任务是先理解用户指令，再决定是否启动正式评估。',
@@ -47,15 +61,17 @@ export function buildInstructionIntentPrompt(input: IntentPromptInput) {
     '  "missingInfo": ["缺失信息1"],',
     '  "recommendedMode": "discuss",',
     '  "recommendedAgentType": "orchestrator",',
-    '  "recommendedRoleId": "",',
-    '  "recommendedWorkItemId": ""',
+    '  "recommendedRoleId": "start_evaluation 时必须填写候选岗位专家ID",',
+    '  "recommendedWorkItemId": "start_evaluation 时必须填写候选工作项ID"',
     '}',
     '',
     '约束：',
     '- 当前只在“智能规划”模式调用你；recommendedMode 默认保持 discuss。',
+    '- start_evaluation 时必须从候选工作项中选择一个最匹配的 recommendedWorkItemId，并填写对应 recommendedRoleId。',
+    '- 如果无法从候选工作项中明确选择一个工作项，应 ask_clarification，询问用户审查重点或工作项方向。',
     '- 不要替用户编造项目事实；缺失事实影响判断时应 ask_clarification。',
     '- 如果用户问“这个按钮怎么用”“解释一下报告”等咨询问题，应 reply_only。',
-    '- 如果用户指令为空或只有泛泛的“看看/分析一下”，但项目资料足够，可 start_evaluation 并使用标准 AMC 多Agent协作评估。',
+    '- 如果用户指令为空或只有泛泛的“看看/分析一下”，但无法明确匹配工作项，应 ask_clarification。',
     '',
     '【当前项目】',
     `项目名称：${input.project.name}`,
@@ -78,9 +94,62 @@ export function buildInstructionIntentPrompt(input: IntentPromptInput) {
     input.clarificationContext?.assistantQuestion ? `上一轮反问：${input.clarificationContext.assistantQuestion}` : '',
     input.clarificationContext?.previousSummary ? `上一轮理解摘要：${input.clarificationContext.previousSummary}` : '',
     '',
+    '【候选岗位专家】',
+    (input.candidateRoles || []).length
+      ? (input.candidateRoles || []).map(role => `- 岗位专家ID：${role.id}；名称：${role.name}；类型：${role.agentType}；职责：${role.role}`).join('\n')
+      : '无可用岗位专家',
+    '',
+    '【候选工作项】',
+    candidateWorkItems || '无可用工作项',
+    '',
     '【用户本次输入】',
     input.userInstruction || '（用户未输入专项指令）',
   ].filter(Boolean).join('\n');
+}
+
+export function normalizeInstructionIntentWorkItemSelection(
+  intent: InstructionIntentResult,
+  input: { domain?: AgentDomain | null; roles: AgentRole[]; workItems: AgentWorkItem[] },
+): InstructionIntentResult {
+  if (intent.decision !== 'start_evaluation') return intent;
+
+  const activeRoles = input.roles.filter(role => role.status !== 'inactive' && (!input.domain || role.domainId === input.domain.id));
+  const activeWorkItems = input.workItems.filter(item => item.status !== 'inactive' && (!input.domain || item.domainId === input.domain.id));
+  const roleById = new Map(activeRoles.map(role => [role.id, role]));
+  const workItem = intent.recommendedWorkItemId
+    ? activeWorkItems.find(item => item.id === intent.recommendedWorkItemId)
+    : undefined;
+  const role = intent.recommendedRoleId
+    ? roleById.get(intent.recommendedRoleId)
+    : workItem ? roleById.get(workItem.roleId) : undefined;
+
+  if (!workItem || !role || workItem.roleId !== role.id) {
+    return {
+      ...intent,
+      decision: 'ask_clarification',
+      normalizedInstruction: '',
+      reply: '请补充本次希望执行的审查重点或工作项方向，我会据此选择对应专家工作项后再启动评估。',
+      clarificationQuestion: '本次希望重点执行哪个工作项方向？例如法务合规审查、估值测算复核、风险等级评定或行业周期研判。',
+      rationale: [
+        intent.rationale,
+        !intent.recommendedWorkItemId ? 'Hermes 未返回明确推荐工作项。' : '',
+        intent.recommendedWorkItemId && !workItem ? `推荐工作项 ${intent.recommendedWorkItemId} 不可用或不属于当前领域。` : '',
+        intent.recommendedRoleId && !role ? `推荐岗位专家 ${intent.recommendedRoleId} 不可用或不属于当前领域。` : '',
+        workItem && role && workItem.roleId !== role.id ? '推荐工作项与推荐岗位专家不匹配。' : '',
+      ].filter(Boolean).join(' '),
+      confidence: Math.min(intent.confidence, 0.6),
+      missingInfo: Array.from(new Set([...intent.missingInfo, '明确工作项'])),
+      recommendedRoleId: role?.id,
+      recommendedWorkItemId: workItem?.id,
+    };
+  }
+
+  return {
+    ...intent,
+    recommendedRoleId: role.id,
+    recommendedWorkItemId: workItem.id,
+    recommendedAgentType: role.agentType,
+  };
 }
 
 export function parseInstructionIntentResponse(value: string): InstructionIntentResult {
@@ -142,6 +211,8 @@ export function buildPlanningMechanismInstructions(
     intent.normalizedInstruction ? `规范化指令：${intent.normalizedInstruction}` : '',
     `判断依据：${intent.rationale}`,
     `置信度：${intent.confidence}`,
+    intent.recommendedRoleId ? `推荐岗位专家ID：${intent.recommendedRoleId}` : '',
+    intent.recommendedWorkItemId ? `推荐工作项ID：${intent.recommendedWorkItemId}` : '',
   ].filter(Boolean).join('\n') : '';
 
   const modeBlock = (() => {
@@ -170,6 +241,8 @@ export function buildPlanningMechanismInstructions(
       '【规划机制：智能规划】',
       '必须基于前置意图理解结果自主选择必要专家和执行顺序；不要机械启动所有专家。',
       '如果用户指令聚焦法律、估值、风险或行业中的某一类，应优先调度相关专家，并说明调度理由。',
+      runtime?.role ? `智能规划已确认主责岗位专家：${runtime.role.name}` : '',
+      runtime?.workItem ? `智能规划已确认主责工作项：${runtime.workItem.name}` : '',
     ].join('\n');
   })();
 

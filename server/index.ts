@@ -83,6 +83,7 @@ import {
 import {
   buildInstructionIntentPrompt,
   buildPlanningMechanismInstructions,
+  normalizeInstructionIntentWorkItemSelection,
   parseInstructionIntentResponse,
   type InstructionClarificationContext,
 } from './instruction-intent';
@@ -528,6 +529,8 @@ app.post('/api/projects/:id/instruction-intent', async (c) => {
   const selectedDomain = body.domainId ? getAgentDomain(body.domainId) : getAgentDomainByCode(project.projectType);
   const selectedRole = body.roleId ? getAgentRole(body.roleId) : null;
   const selectedWorkItem = body.workItemId ? getAgentWorkItem(body.workItemId) : null;
+  const candidateRoles = selectedDomain ? listAgentRoles({ domainId: selectedDomain.id, includeInactive: false }) : listAgentRoles({ includeInactive: false });
+  const candidateWorkItems = selectedDomain ? listAgentWorkItems({ domainId: selectedDomain.id, includeInactive: false }) : listAgentWorkItems({ includeInactive: false });
   const userInstruction = typeof body.userInstruction === 'string' ? body.userInstruction.trim() : '';
 
   try {
@@ -539,12 +542,18 @@ app.post('/api/projects/:id/instruction-intent', async (c) => {
         domain: selectedDomain,
         role: selectedRole,
         workItem: selectedWorkItem,
+        candidateRoles,
+        candidateWorkItems,
         clarificationContext: body.clarificationContext,
       }),
       sessionId: `amc-intent-${project.id}`,
       conversationTitle: `${project.name} 智能规划意图理解`,
     });
-    const intent = parseInstructionIntentResponse(reply);
+    const intent = normalizeInstructionIntentWorkItemSelection(parseInstructionIntentResponse(reply), {
+      domain: selectedDomain,
+      roles: candidateRoles,
+      workItems: candidateWorkItems,
+    });
     return c.json({ success: true, intent });
   } catch (error) {
     console.error('Hermes instruction intent failed:', error);
@@ -569,14 +578,24 @@ app.post('/api/projects/:id/evaluate', async (c) => {
   }>();
   const mode = body.orchestratorMode || 'single';
   const analysisId = generateAnalysisId();
-  const targetAgentKey = mode !== 'single' ? 'orchestrator' : (body.agentType || 'law_review');
   const selectedDomain = body.domainId ? getAgentDomain(body.domainId) : getAgentDomainByCode(project.projectType);
-  const selectedRole = body.roleId ? getAgentRole(body.roleId) : null;
-  const selectedWorkItem = body.workItemId ? getAgentWorkItem(body.workItemId) : null;
+  const resolvedRuntime = resolveEvaluationRuntime({
+    mode,
+    domain: selectedDomain,
+    requestedAgentType: body.agentType,
+    requestedRoleId: body.roleId,
+    requestedWorkItemId: body.workItemId,
+    instructionIntent: body.instructionIntent,
+  });
+  if (resolvedRuntime.error) return c.json({ message: resolvedRuntime.error }, 400);
+
+  const selectedRole = resolvedRuntime.role;
+  const selectedWorkItem = resolvedRuntime.workItem;
   const selectedDefinition = selectedWorkItem?.definition;
-  const skills = body.selectedSkills?.length
-    ? body.selectedSkills
-    : selectedDefinition?.skills || [];
+  const targetAgentKey = mode !== 'single' ? 'orchestrator' : (selectedRole?.agentType || body.agentType || 'law_review');
+  const skills = selectedDefinition?.skills?.length
+    ? selectedDefinition.skills
+    : body.selectedSkills || [];
   const effectiveInstruction = body.instructionIntent?.normalizedInstruction?.trim()
     || body.userInstruction?.trim()
     || '';
@@ -632,6 +651,7 @@ app.post('/api/projects/:id/evaluate', async (c) => {
       agentRoleId: selectedRole?.id,
       agentWorkItemId: selectedWorkItem?.id,
       agentWorkItemDefinition: selectedDefinition,
+      resolvedRuntime: buildResolvedRuntimeResponse(resolvedRuntime),
       instructionIntent: body.instructionIntent,
       sensitiveWordsFlagged: findSensitiveWords(project),
     },
@@ -673,6 +693,7 @@ app.post('/api/projects/:id/evaluate', async (c) => {
     analysisId,
     runId: run.run_id,
     runStatus: run.status,
+    resolvedRuntime: buildResolvedRuntimeResponse(resolvedRuntime),
     eventsUrl: `/api/analysis/${encodeURIComponent(analysisId)}/events`,
     events: analysisRecord.events.map((event, index) => ({ sequence: index + 1, event })),
     record: evaluationRecord,
@@ -1107,6 +1128,100 @@ function appendHermesEventWithCompletion(analysisId: string, event: HermesEvent)
   return latest;
 }
 
+type EvaluationRuntimeSource = 'intent' | 'manual' | 'chain' | 'orchestrator';
+
+type ResolvedEvaluationRuntime = {
+  domain?: AgentDomain | null;
+  role?: AgentRole | null;
+  workItem?: AgentWorkItem | null;
+  source: EvaluationRuntimeSource;
+  error?: string;
+};
+
+function resolveEvaluationRuntime(input: {
+  mode: OrchestratorMode;
+  domain?: AgentDomain | null;
+  requestedAgentType?: AgentType;
+  requestedRoleId?: string;
+  requestedWorkItemId?: string;
+  instructionIntent?: InstructionIntentResult;
+}): ResolvedEvaluationRuntime {
+  if (input.mode === 'chain') {
+    return { domain: input.domain, role: null, workItem: null, source: 'chain' };
+  }
+
+  if (input.mode === 'master-slave') {
+    return { domain: input.domain, role: null, workItem: null, source: 'orchestrator' };
+  }
+
+  if (input.mode === 'discuss') {
+    if (input.instructionIntent?.decision !== 'start_evaluation') {
+      return { domain: input.domain, role: null, workItem: null, source: 'intent', error: '智能规划尚未确认可启动评估。' };
+    }
+    const workItem = input.instructionIntent.recommendedWorkItemId ? getAgentWorkItem(input.instructionIntent.recommendedWorkItemId) : null;
+    const role = input.instructionIntent.recommendedRoleId
+      ? getAgentRole(input.instructionIntent.recommendedRoleId)
+      : workItem ? getAgentRole(workItem.roleId) : null;
+    return {
+      domain: input.domain,
+      role,
+      workItem,
+      source: 'intent',
+      error: validateResolvedRuntime(input.domain, role, workItem, { requireWorkItem: true }),
+    };
+  }
+
+  const role = input.requestedRoleId
+    ? getAgentRole(input.requestedRoleId)
+    : findDefaultRole(input.domain, input.requestedAgentType);
+  const workItem = input.requestedWorkItemId
+    ? getAgentWorkItem(input.requestedWorkItemId)
+    : role ? listAgentWorkItems({ roleId: role.id, includeInactive: false })[0] || null : null;
+  return {
+    domain: input.domain,
+    role,
+    workItem,
+    source: 'manual',
+    error: validateResolvedRuntime(input.domain, role, workItem, { requireWorkItem: true }),
+  };
+}
+
+function findDefaultRole(domain?: AgentDomain | null, agentType?: AgentType) {
+  const roles = domain
+    ? listAgentRoles({ domainId: domain.id, includeInactive: false })
+    : listAgentRoles({ includeInactive: false });
+  return roles.find(role => role.agentType === agentType) || roles[0] || null;
+}
+
+function validateResolvedRuntime(
+  domain: AgentDomain | null | undefined,
+  role: AgentRole | null | undefined,
+  workItem: AgentWorkItem | null | undefined,
+  options: { requireWorkItem: boolean },
+) {
+  if (!role) return '未找到可用岗位专家，请先在智能体配置中维护当前领域的岗位专家。';
+  if (role.status === 'inactive') return `岗位专家「${role.name}」已停用，请重新选择。`;
+  if (domain && role.domainId !== domain.id) return `岗位专家「${role.name}」不属于当前项目领域。`;
+  if (options.requireWorkItem && !workItem) return '未找到可用工作项，请先选择或维护该岗位专家的工作项。';
+  if (!workItem) return undefined;
+  if (workItem.status === 'inactive') return `工作项「${workItem.name}」已停用，请重新选择。`;
+  if (domain && workItem.domainId !== domain.id) return `工作项「${workItem.name}」不属于当前项目领域。`;
+  if (workItem.roleId !== role.id) return `工作项「${workItem.name}」不属于岗位专家「${role.name}」。`;
+  return undefined;
+}
+
+function buildResolvedRuntimeResponse(runtime: ResolvedEvaluationRuntime) {
+  return {
+    source: runtime.source,
+    domainId: runtime.domain?.id,
+    domainName: runtime.domain?.label,
+    roleId: runtime.role?.id,
+    roleName: runtime.role?.name,
+    workItemId: runtime.workItem?.id,
+    workItemName: runtime.workItem?.name,
+  };
+}
+
 function buildAmcRunInput(
   project: AMCProject,
   activeKbs: string[],
@@ -1147,6 +1262,8 @@ function buildInstructionIntentInputBlock(intent: InstructionIntentResult) {
     `回复用户：${intent.reply}`,
     intent.missingInfo.length ? `缺失信息：${intent.missingInfo.join('、')}` : '',
     `调度理由：${intent.rationale}`,
+    intent.recommendedRoleId ? `推荐岗位专家ID：${intent.recommendedRoleId}` : '',
+    intent.recommendedWorkItemId ? `推荐工作项ID：${intent.recommendedWorkItemId}` : '',
   ].filter(Boolean).join('\n');
 }
 

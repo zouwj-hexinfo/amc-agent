@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentRole, AgentWorkItem, InstructionIntentResult } from '../src/types';
-import { buildInstructionIntentPrompt, buildPlanningMechanismInstructions, parseInstructionIntentResponse } from './instruction-intent';
-import { seedAgentRoles, seedAgentWorkItems, seedProjects } from './seed-data';
+import type { AgentDomain, AgentRole, AgentWorkItem, InstructionIntentResult } from '../src/types';
+import { buildInstructionIntentPrompt, buildPlanningMechanismInstructions, normalizeInstructionIntentWorkItemSelection, parseInstructionIntentResponse } from './instruction-intent';
+import { seedAgentDomains, seedAgentRoles, seedAgentWorkItems, seedProjects } from './seed-data';
 
 const project = seedProjects[0];
+const domain = seedAgentDomains.find(item => item.code === project.projectType) as AgentDomain;
 const role = seedAgentRoles.find(item => item.agentType === 'law_review') as AgentRole;
 const workItem = seedAgentWorkItems.find(item => item.roleId === role.id) as AgentWorkItem;
 
@@ -19,11 +20,15 @@ describe('parseInstructionIntentResponse', () => {
       missingInfo: [],
       recommendedMode: 'discuss',
       recommendedAgentType: 'orchestrator',
+      recommendedRoleId: role.id,
+      recommendedWorkItemId: workItem.id,
     }));
 
     expect(intent.decision).toBe('start_evaluation');
     expect(intent.normalizedInstruction).toContain('抵押顺位');
     expect(intent.recommendedAgentType).toBe('orchestrator');
+    expect(intent.recommendedRoleId).toBe(role.id);
+    expect(intent.recommendedWorkItemId).toBe(workItem.id);
   });
 
   test('parses fenced JSON clarification response', () => {
@@ -69,6 +74,68 @@ describe('parseInstructionIntentResponse', () => {
   });
 });
 
+describe('normalizeInstructionIntentWorkItemSelection', () => {
+  const baseIntent: InstructionIntentResult = {
+    decision: 'start_evaluation',
+    summary: '审查抵押顺位',
+    normalizedInstruction: '请核验抵押顺位。',
+    reply: '将启动智能规划。',
+    rationale: '用户提出明确评估任务。',
+    confidence: 0.9,
+    missingInfo: [],
+    recommendedMode: 'discuss',
+    recommendedAgentType: 'orchestrator',
+  };
+
+  test('keeps a valid recommended role and work item', () => {
+    const intent = normalizeInstructionIntentWorkItemSelection({
+      ...baseIntent,
+      recommendedRoleId: role.id,
+      recommendedWorkItemId: workItem.id,
+    }, {
+      domain,
+      roles: [role],
+      workItems: [workItem],
+    });
+
+    expect(intent.decision).toBe('start_evaluation');
+    expect(intent.recommendedAgentType).toBe(role.agentType);
+    expect(intent.recommendedRoleId).toBe(role.id);
+    expect(intent.recommendedWorkItemId).toBe(workItem.id);
+  });
+
+  test('asks for clarification when no valid work item is recommended', () => {
+    const intent = normalizeInstructionIntentWorkItemSelection({
+      ...baseIntent,
+      recommendedRoleId: role.id,
+    }, {
+      domain,
+      roles: [role],
+      workItems: [workItem],
+    });
+
+    expect(intent.decision).toBe('ask_clarification');
+    expect(intent.clarificationQuestion).toContain('工作项');
+    expect(intent.missingInfo).toContain('明确工作项');
+  });
+
+  test('rejects cross-role work item recommendation', () => {
+    const otherRole = seedAgentRoles.find(item => item.domainId === domain.id && item.id !== role.id) as AgentRole;
+    const intent = normalizeInstructionIntentWorkItemSelection({
+      ...baseIntent,
+      recommendedRoleId: otherRole.id,
+      recommendedWorkItemId: workItem.id,
+    }, {
+      domain,
+      roles: [role, otherRole],
+      workItems: [workItem],
+    });
+
+    expect(intent.decision).toBe('ask_clarification');
+    expect(intent.rationale).toContain('不匹配');
+  });
+});
+
 describe('buildPlanningMechanismInstructions', () => {
   const intent: InstructionIntentResult = {
     decision: 'start_evaluation',
@@ -105,6 +172,8 @@ describe('buildInstructionIntentPrompt', () => {
       mode: 'discuss',
       role,
       workItem,
+      candidateRoles: [role],
+      candidateWorkItems: [workItem],
       clarificationContext: {
         originalInstruction: '帮我看看',
         assistantQuestion: '请补充审查重点。',
@@ -116,5 +185,7 @@ describe('buildInstructionIntentPrompt', () => {
     expect(prompt).toContain('规划机制：discuss');
     expect(prompt).toContain('上一轮反问：请补充审查重点。');
     expect(prompt).toContain('补充：核验查封顺位');
+    expect(prompt).toContain(`岗位专家ID：${role.id}`);
+    expect(prompt).toContain(`工作项ID：${workItem.id}`);
   });
 });
