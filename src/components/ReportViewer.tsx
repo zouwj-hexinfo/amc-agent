@@ -157,20 +157,15 @@ function AgentTraceTimeline({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
-      <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
-        <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
-            <TerminalSquare className="h-3.5 w-3.5" style={{ color: color.base }} />
-          </span>
-          <div className="min-w-0">
-            <div className="text-xs font-extrabold text-slate-900">智能体交互流水</div>
-            <div className="text-[10px] font-semibold text-slate-400">
-              当前项目后续 Hermes Agent 返回消息与用户输入文本
-            </div>
+      <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-2 sm:px-5">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="truncate text-xs font-extrabold leading-4 text-slate-900">智能体交互流水</div>
+          <div className="shrink-0 text-[10px] font-bold leading-4 text-slate-400">
+            {visibleEvents.length} 次执行 · {visibleMessageCount} 条有效通信
           </div>
         </div>
-        <div className="mt-2 text-[10px] font-bold text-slate-400 sm:mt-0 sm:text-right">
-          {visibleEvents.length} 次执行 · {visibleMessageCount} 条有效通信
+        <div className="truncate text-[10px] font-semibold leading-4 text-slate-400">
+          当前项目后续 Hermes Agent 返回消息与用户输入文本
         </div>
       </div>
 
