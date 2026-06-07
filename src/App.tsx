@@ -2216,7 +2216,7 @@ ${selectedTextStr}
         {/* WORKSPACE & DETAILS workspace */}
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Active Tab Contents Area */}
-          <div className={currentMode === 'work' && currentProject ? "flex-1 min-h-0 overflow-hidden p-6 flex flex-col" : "flex-1 p-6 overflow-y-auto"}>
+          <div className={currentMode === 'work' && currentProject ? "flex-1 min-h-0 overflow-hidden p-3 flex flex-col" : "flex-1 p-3 overflow-y-auto"}>
             {evalSuccessMessage && (
               <div className="mb-4 py-3.5 px-5 bg-emerald-50/60 border border-emerald-300/80 rounded-xl text-xs text-emerald-800 flex items-center justify-between shadow-3xs animate-in fade-in duration-300">
                 <div className="flex items-center gap-2">
