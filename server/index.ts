@@ -280,12 +280,20 @@ app.post('/api/analysis/:id/stop', async (c) => {
 
 app.post('/api/hermes/chat', async (c) => {
   if (!hermesAvailable) return c.json({ message: 'Hermes Agent API 暂不可用。' }, 503);
-  const body = await c.req.json<{ prompt?: string; sessionId?: string; conversationTitle?: string }>();
+  const body = await c.req.json<{ prompt?: string; projectId?: string; sessionId?: string; conversationTitle?: string }>();
   if (!body.prompt?.trim()) return c.json({ message: '请输入要追问的问题。' }, 400);
+  const project = body.projectId ? getProject(body.projectId) : null;
+  if (body.projectId && !project) return c.json({ message: 'Project not found' }, 404);
+  const sessionId = body.sessionId || (project ? buildProjectChatSessionId(project.id) : undefined);
+  const conversationTitle = body.conversationTitle || (project ? `${project.name} 智能体问答` : undefined);
 
   try {
-    const reply = await askHermes({ prompt: body.prompt, sessionId: body.sessionId, conversationTitle: body.conversationTitle });
-    return c.json({ reply });
+    const reply = await askHermes({
+      prompt: project ? buildProjectChatPrompt(project, body.prompt) : body.prompt,
+      sessionId,
+      conversationTitle,
+    });
+    return c.json({ reply, sessionId });
   } catch (error) {
     console.error(error);
     return c.json({ message: 'Hermes 智能助手调用失败。' }, 502);
@@ -549,11 +557,19 @@ app.post('/api/projects/:id/instruction-intent', async (c) => {
       sessionId: `amc-intent-${project.id}`,
       conversationTitle: `${project.name} 智能规划意图理解`,
     });
-    const intent = normalizeInstructionIntentWorkItemSelection(parseInstructionIntentResponse(reply), {
+    let intent = normalizeInstructionIntentWorkItemSelection(parseInstructionIntentResponse(reply), {
       domain: selectedDomain,
       roles: candidateRoles,
       workItems: candidateWorkItems,
     });
+    if (intent.decision === 'reply_only') {
+      const chatReply = await askHermes({
+        prompt: buildProjectChatPrompt(project, userInstruction),
+        sessionId: buildProjectChatSessionId(project.id),
+        conversationTitle: `${project.name} 智能体问答`,
+      });
+      intent = { ...intent, reply: chatReply };
+    }
     return c.json({ success: true, intent });
   } catch (error) {
     console.error('Hermes instruction intent failed:', error);
@@ -1108,6 +1124,36 @@ function analysisResponse(record: NonNullable<ReturnType<typeof getAnalysisRecor
       ? { events: record.events.map((event, index) => ({ sequence: index + 1, event })) }
       : {}),
   };
+}
+
+function buildProjectChatSessionId(projectId: string) {
+  return `amc-chat-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function buildProjectChatPrompt(project: AMCProject, prompt: string) {
+  const businessFields = project.businessFields
+    ? Object.entries(project.businessFields).map(([key, value]) => `${key}: ${String(value)}`).join('\n')
+    : '无';
+
+  return [
+    '【项目级智能体问答】',
+    '这是非分析场景：请直接回答用户问题，不创建分析任务，不生成报告版本，不声明已启动 Hermes run。',
+    '',
+    '【当前项目】',
+    `项目ID：${project.id}`,
+    `项目名称：${project.name}`,
+    `客户名称：${project.customerName}`,
+    `项目类型：${project.projectType}`,
+    `债务主体：${project.debtorName}`,
+    `债权金额：${project.totalDebt} 万元`,
+    `抵质押物：${project.collateralType}`,
+    `抵押物估值：${project.collateralEstValue} 万元`,
+    `项目说明：${project.description}`,
+    `业务字段：\n${businessFields}`,
+    '',
+    '【用户问题】',
+    prompt.trim() || '请结合当前项目上下文提供说明。',
+  ].join('\n');
 }
 
 function appendHermesEventWithCompletion(analysisId: string, event: HermesEvent) {
