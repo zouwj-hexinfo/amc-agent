@@ -123,7 +123,7 @@ function AgentTraceTimeline({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
       <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
@@ -652,27 +652,28 @@ export default function ReportViewer({
   }, [activeRecord?.id, currentProject.id, selectedTuningText]);
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      <div className="shrink-0 sticky top-0 z-30 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xs">
-        <ReportDisplayTabButton
-          active={displayTab === 'report'}
-          label="报告显示"
-          count={activeList.length}
-          icon={<FileText className="w-3.5 h-3.5" />}
-          brand={brand}
-          onClick={() => setDisplayTab('report')}
-        />
-        <ReportDisplayTabButton
-          active={displayTab === 'agentTrace'}
-          label="智能体对话记录"
-          count={projectExecutionEvents.reduce((count, event) => count + event.communicationTranscripts.length, 0)}
-          icon={<MessageCircle className="w-3.5 h-3.5" />}
-          brand={brand}
-          onClick={() => setDisplayTab('agentTrace')}
-        />
-      </div>
+    <div className="h-full min-h-0 flex flex-col">
+      <div className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
+        <div className="shrink-0 sticky top-0 z-30 flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/80 p-1.5">
+          <ReportDisplayTabButton
+            active={displayTab === 'report'}
+            label="报告显示"
+            count={activeList.length}
+            icon={<FileText className="w-3.5 h-3.5" />}
+            brand={brand}
+            onClick={() => setDisplayTab('report')}
+          />
+          <ReportDisplayTabButton
+            active={displayTab === 'agentTrace'}
+            label="智能体对话记录"
+            count={projectExecutionEvents.reduce((count, event) => count + event.communicationTranscripts.length, 0)}
+            icon={<MessageCircle className="w-3.5 h-3.5" />}
+            brand={brand}
+            onClick={() => setDisplayTab('agentTrace')}
+          />
+        </div>
 
-      <div className={`min-h-0 flex-1 pr-1 ${displayTab === 'agentTrace' ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <div className={`min-h-0 flex-1 ${displayTab === 'agentTrace' ? "overflow-hidden" : "overflow-y-auto p-4"}`}>
         {displayTab === 'agentTrace' ? (
           <AgentTraceTimeline
             events={projectExecutionEvents}
@@ -998,6 +999,7 @@ export default function ReportViewer({
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }
