@@ -63,16 +63,24 @@ function ReportDisplayTabButton({
   );
 }
 
+type AgentTraceScrollState = {
+  scrollTop: number;
+  latestMessageSignature: string;
+};
+
 function AgentTraceTimeline({
   events,
   currentTheme,
   brand,
+  scrollStateRef,
 }: {
   events: ExecutionEvent[];
   currentTheme: any;
   brand: string;
+  scrollStateRef: React.MutableRefObject<AgentTraceScrollState>;
 }) {
   const color = hexMap[brand] || hexMap.indigo;
+  const scrollBodyRef = React.useRef<HTMLDivElement | null>(null);
   const bottomAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const latestMessageSignature = React.useMemo(
     () => events.map(event => {
@@ -89,9 +97,18 @@ function AgentTraceTimeline({
     [events]
   );
 
-  React.useEffect(() => {
-    bottomAnchorRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [latestMessageSignature]);
+  React.useLayoutEffect(() => {
+    const scrollBody = scrollBodyRef.current;
+    if (!scrollBody) return;
+
+    const previousSignature = scrollStateRef.current.latestMessageSignature;
+    if (!previousSignature || previousSignature === latestMessageSignature) {
+      scrollBody.scrollTop = scrollStateRef.current.scrollTop;
+    } else {
+      bottomAnchorRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    }
+    scrollStateRef.current.latestMessageSignature = latestMessageSignature;
+  }, [latestMessageSignature, scrollStateRef]);
 
   if (events.length === 0) {
     return (
@@ -124,7 +141,13 @@ function AgentTraceTimeline({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 px-3 py-4 sm:px-5">
+      <div
+        ref={scrollBodyRef}
+        onScroll={(event) => {
+          scrollStateRef.current.scrollTop = event.currentTarget.scrollTop;
+        }}
+        className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 px-3 py-4 sm:px-5"
+      >
         <div className="space-y-5">
         {events.map(event => {
           const hasTranscripts = event.communicationTranscripts.length > 0;
@@ -513,6 +536,10 @@ export default function ReportViewer({
   const [showRevisionList, setShowRevisionList] = React.useState(false);
   const [tuningSuggestions, setTuningSuggestions] = React.useState<TuningSuggestion[]>([]);
   const [isLoadingTuningSuggestions, setIsLoadingTuningSuggestions] = React.useState(false);
+  const agentTraceScrollStateRef = React.useRef<AgentTraceScrollState>({
+    scrollTop: 0,
+    latestMessageSignature: "",
+  });
 
   const extractBrand = () => {
     const bgClass = currentTheme?.accentBg || "bg-indigo-600";
@@ -651,6 +678,7 @@ export default function ReportViewer({
             events={projectExecutionEvents}
             currentTheme={currentTheme}
             brand={brand}
+            scrollStateRef={agentTraceScrollStateRef}
           />
         ) : activeList.length === 0 ? (
           <div className="bg-white p-12 border border-slate-200 rounded-2xl text-center shadow-2xs select-none">
