@@ -3282,11 +3282,11 @@ ${selectedTextStr}
       {/* Legacy modal removed in favor of inline paragraph micro-tuning input */}
       
       {/* Absolute Toast Notifications (highly customized, responsive and non-blocking in sandboxed environment) */}
-      <div className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+      <div className="fixed left-1/2 top-24 z-[9999] flex w-[min(92vw,520px)] -translate-x-1/2 flex-col gap-2 pointer-events-none">
         {toasts.map(t => (
           <div
             key={t.id}
-            className={`p-3.5 rounded-xl shadow-xl border text-xs font-medium flex items-start gap-2.5 pointer-events-auto animate-in slide-in-from-bottom-5 fade-in duration-300 ${
+            className={`p-3.5 rounded-xl shadow-xl border text-xs font-medium flex items-start gap-2.5 pointer-events-auto animate-in slide-in-from-top-3 fade-in duration-300 ${
               t.type === 'success' 
                 ? 'bg-slate-900/95 border-slate-800 text-emerald-400 backdrop-blur-md' 
                 : t.type === 'error' 
