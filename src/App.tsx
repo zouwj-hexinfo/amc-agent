@@ -3383,10 +3383,11 @@ ${selectedTextStr}
                     setUserEmail(tempEmail);
                     setOverrideThemeBrand(tempThemeBrand);
                     setSelectedMenuBg(tempMenuBg);
-                    setCurrentMode(tempMode);
                     if (tempMode === 'work') {
+                      setCurrentMode('home');
                       setActiveTab('workspace');
                     } else {
+                      setCurrentMode('config');
                       setActiveTab('agents');
                     }
                     setIsSettingsOpen(false);
