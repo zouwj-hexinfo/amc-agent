@@ -1,7 +1,7 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  CheckCircle2, Clock, FileText, Wand2, RefreshCw, X, AlertTriangle, FileCheck2, ShieldCheck, Activity, Gauge, MessageCircle, Bot, UserRound, TerminalSquare
+  CheckCircle2, Clock, FileText, Wand2, RefreshCw, X, AlertTriangle, FileCheck2, ShieldCheck, Activity, Gauge, MessageCircle, Bot, UserRound, TerminalSquare, Download
 } from "lucide-react";
 import { EvaluationRecord, AMCProject, ExecutionEvent, CommunicationBubble } from "../types";
 import MarkdownRenderer from "./MarkdownRenderer";
@@ -28,6 +28,30 @@ const hexMap: Record<string, { base: string; dark: string; light: string; lighte
   cyan: { base: "#0891b2", dark: "#155e75", light: "#22d3ee", lighter: "#ecfeff" },
   rose: { base: "#e11d48", dark: "#9f1239", light: "#fb7185", lighter: "#ffe4e6" },
 };
+
+function sanitizeDownloadFilename(value: string) {
+  return value
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 80) || "report";
+}
+
+function downloadMarkdownReport(project: AMCProject, record: EvaluationRecord) {
+  const versionLabel = `V${record.version}.0`;
+  const dateLabel = formatBeijingTime(record.createdAt).replace(/[:/\\\s]+/g, "-");
+  const filename = `${sanitizeDownloadFilename(project.name)}-${versionLabel}-${dateLabel}.md`;
+  const blob = new Blob([record.content || ""], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 function ReportDisplayTabButton({
   active,
@@ -775,6 +799,27 @@ export default function ReportViewer({
           {/* Sub CENTER: Markdown Viewer */}
           {activeRecord && (
             <div className="lg:col-span-7 space-y-4 bg-white p-6 border border-slate-200 rounded-xl shadow-sm min-h-[400px]">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-extrabold text-slate-800">
+                    V{activeRecord.version}.0 报告正文
+                  </div>
+                  <div className="mt-0.5 text-[10px] font-semibold text-slate-400">
+                    {formatBeijingTime(activeRecord.createdAt)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => downloadMarkdownReport(currentProject, activeRecord)}
+                  disabled={!activeRecord.content?.trim()}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-slate-600 shadow-2xs transition-all hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-45"
+                  aria-label="下载当前报告"
+                  title="下载当前报告"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>下载报告</span>
+                </button>
+              </div>
 
               {activeRecord.notes && (
                 <div className="p-3.5 bg-rose-50 border border-rose-150 rounded-xl text-xs text-rose-800 flex items-start gap-2 animate-pulse leading-relaxed text-left">
