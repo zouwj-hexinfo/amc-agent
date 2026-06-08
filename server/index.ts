@@ -88,6 +88,16 @@ import {
   type InstructionClarificationContext,
 } from './instruction-intent';
 import { mergeHermesKnowledgeAttachmentPreview, parseKnowledgeAttachmentFile, previewKnowledgeAttachmentFiles } from './knowledge-attachment-parser';
+import {
+  AUTH_COOKIE_NAME,
+  authenticateUser,
+  buildExpiredSessionCookie,
+  buildSessionCookie,
+  createAuthSession,
+  destroyAuthSession,
+  getAuthUserBySession,
+  parseCookie,
+} from './auth';
 
 const app = new Hono();
 const hermesAvailable = process.env.HERMES_AGENT_DISABLED !== '1';
@@ -115,6 +125,43 @@ app.get('/api/health', (c) => {
     hermesModel: hermesModel(),
     sqlitePath: process.env.XFAS_ANALYSIS_DB_PATH || 'data/xfas.db',
   });
+});
+
+app.post('/api/auth/login', async (c) => {
+  const body = await c.req.json<{ username?: string; password?: string }>().catch(() => ({} as { username?: string; password?: string }));
+  const username = typeof body.username === 'string' ? body.username.trim() : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+  const user = authenticateUser(username, password);
+  if (!user) return c.json({ message: '用户名或密码错误。' }, 401);
+
+  const sessionId = createAuthSession(user.username);
+  c.header('Set-Cookie', buildSessionCookie(sessionId));
+  return c.json({ user });
+});
+
+app.get('/api/auth/me', (c) => {
+  const sessionId = parseCookie(c.req.header('Cookie'), AUTH_COOKIE_NAME);
+  const user = getAuthUserBySession(sessionId);
+  if (!user) return c.json({ message: '未登录或登录已过期。' }, 401);
+  return c.json({ user });
+});
+
+app.post('/api/auth/logout', (c) => {
+  const sessionId = parseCookie(c.req.header('Cookie'), AUTH_COOKIE_NAME);
+  destroyAuthSession(sessionId);
+  c.header('Set-Cookie', buildExpiredSessionCookie());
+  return c.json({ success: true });
+});
+
+app.use('/api/*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path === '/api/health' || path.startsWith('/api/auth/')) {
+    return next();
+  }
+  const sessionId = parseCookie(c.req.header('Cookie'), AUTH_COOKIE_NAME);
+  const user = getAuthUserBySession(sessionId);
+  if (!user) return c.json({ message: '未登录或登录已过期。' }, 401);
+  return next();
 });
 
 app.post('/api/analysis/start', async (c) => {
@@ -1986,10 +2033,14 @@ function buildHermesRunStreamFailureEvent(error: unknown, snapshot: HermesRunFai
   };
 }
 
-const server = Bun.serve({
-  port,
-  idleTimeout: serverIdleTimeout,
-  fetch: app.fetch,
-});
+export { app };
 
-console.log(`AMC Agent API listening on ${server.url} (idleTimeout=${serverIdleTimeout}s)`);
+if (import.meta.main) {
+  const server = Bun.serve({
+    port,
+    idleTimeout: serverIdleTimeout,
+    fetch: app.fetch,
+  });
+
+  console.log(`AMC Agent API listening on ${server.url} (idleTimeout=${serverIdleTimeout}s)`);
+}

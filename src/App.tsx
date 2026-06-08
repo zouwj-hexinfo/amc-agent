@@ -492,6 +492,16 @@ type ResolvedRuntimeResponse = {
   workItemName?: string;
 };
 
+type AuthUserProfile = {
+  username: string;
+  displayName: string;
+  email: string;
+  role: string;
+  avatar: string;
+};
+
+type AuthStatus = 'checking' | 'authenticated' | 'anonymous';
+
 function formatResolvedRuntime(runtime?: ResolvedRuntimeResponse | null) {
   if (!runtime) return "";
   if (runtime.roleName && runtime.workItemName) return `实际执行配置：${runtime.roleName} / ${runtime.workItemName}`;
@@ -516,6 +526,11 @@ export default function App() {
   const [userRole, setUserRole] = React.useState("首席信批合规官");
   const [userAvatar, setUserAvatar] = React.useState("LD");
   const [userEmail, setUserEmail] = React.useState("lucky.ding@goupwith.com");
+  const [authStatus, setAuthStatus] = React.useState<AuthStatus>('checking');
+  const [loginUsername, setLoginUsername] = React.useState("admin");
+  const [loginPassword, setLoginPassword] = React.useState("");
+  const [loginError, setLoginError] = React.useState("");
+  const [isLoginSubmitting, setIsLoginSubmitting] = React.useState(false);
   const [overrideThemeBrand, setOverrideThemeBrand] = React.useState<string>("indigo");
   const [selectedMenuBg, setSelectedMenuBg] = React.useState<string>("#0A0F1D");
 
@@ -719,6 +734,49 @@ export default function App() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4500);
   }, []);
+
+  const applyAuthenticatedUser = React.useCallback((user: AuthUserProfile) => {
+    setUserNickname(user.displayName || user.username || "Admin");
+    setUserRole(user.role || "系统管理员");
+    setUserAvatar(user.avatar || "AD");
+    setUserEmail(user.email || "admin@amc.local");
+  }, []);
+
+  const handleAuthExpired = React.useCallback((message = "登录已过期，请重新登录。") => {
+    setAuthStatus('anonymous');
+    setLoginPassword("");
+    setLoginError(message);
+    setIsSettingsOpen(false);
+    setIsLogoutConfirmOpen(false);
+    setIsEvaluating(false);
+  }, []);
+
+  const handleLoginSubmit = React.useCallback(async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!loginUsername.trim() || !loginPassword) {
+      setLoginError("请输入用户名和密码。");
+      return;
+    }
+    setIsLoginSubmitting(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUsername.trim(), password: loginPassword }),
+      });
+      const data = await response.json().catch(() => ({})) as { user?: AuthUserProfile; message?: string };
+      if (!response.ok || !data.user) throw new Error(data.message || "登录失败，请检查账号密码。");
+      applyAuthenticatedUser(data.user);
+      setAuthStatus('authenticated');
+      setLoginPassword("");
+      setLoginError("");
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "登录失败，请稍后重试。");
+    } finally {
+      setIsLoginSubmitting(false);
+    }
+  }, [applyAuthenticatedUser, loginPassword, loginUsername]);
 
   type AnalysisSummary = {
     analysisId: string;
@@ -930,10 +988,36 @@ export default function App() {
     ]);
   };
 
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then(async response => {
+        const data = await response.json().catch(() => ({})) as { user?: AuthUserProfile };
+        if (cancelled) return;
+        if (!response.ok || !data.user) {
+          setAuthStatus('anonymous');
+          return;
+        }
+        applyAuthenticatedUser(data.user);
+        setAuthStatus('authenticated');
+      })
+      .catch(() => {
+        if (!cancelled) setAuthStatus('anonymous');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAuthenticatedUser]);
+
   // Load baseline on startup
   const fetchAllData = async () => {
+    if (authStatus !== 'authenticated') return;
     try {
       const projRes = await fetch("/api/projects");
+      if (projRes.status === 401) {
+        handleAuthExpired();
+        return;
+      }
       const list: AMCProject[] = await projRes.json();
       setProjects(list);
       if (list.length > 0 && !selectedProjectId) {
@@ -1004,8 +1088,10 @@ export default function App() {
   };
 
   React.useEffect(() => {
-    fetchAllData();
-  }, []);
+    if (authStatus === 'authenticated') {
+      fetchAllData();
+    }
+  }, [authStatus]);
 
   const uploadProjectFile = async (projectId: string, fileType: string, file: File) => {
     const formData = new FormData();
@@ -2186,6 +2272,89 @@ ${selectedTextStr}
   const activeList = (currentProject && currentProject.evaluations && currentProject.evaluations[selectedReportKey]) || [];
   const activeRecord = activeList[selectedReportIndex] as EvaluationRecord | undefined;
 
+  if (authStatus !== 'authenticated') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#f8fafc] px-4">
+        <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+          <div className="border-b border-slate-100 bg-slate-950 px-7 py-6 text-white">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-md">
+                <Layers className="h-5 w-5" />
+              </div>
+              <div>
+                <h1 className="text-lg font-extrabold tracking-tight">AMCAgents</h1>
+                <p className="mt-0.5 text-xs font-semibold text-slate-400">AMC项目审查智能体系统</p>
+              </div>
+            </div>
+          </div>
+
+          {authStatus === 'checking' ? (
+            <div className="flex min-h-72 flex-col items-center justify-center gap-3 px-7 py-10 text-center">
+              <RefreshCw className="h-6 w-6 animate-spin text-indigo-600" />
+              <div className="text-sm font-extrabold text-slate-800">正在校验登录状态</div>
+              <p className="text-xs font-semibold text-slate-400">请稍候，系统正在恢复当前会话。</p>
+            </div>
+          ) : (
+            <form onSubmit={handleLoginSubmit} className="space-y-5 px-7 py-7">
+              <div className="space-y-1 text-left">
+                <h2 className="text-base font-extrabold text-slate-900">系统登录</h2>
+                <p className="text-xs font-semibold text-slate-400">请输入账号密码进入 AMC 智能审查工作台。</p>
+              </div>
+
+              <div className="space-y-3">
+                <label className="block text-left">
+                  <span className="mb-1.5 block text-xs font-bold text-slate-600">用户名</span>
+                  <input
+                    value={loginUsername}
+                    onChange={(event) => setLoginUsername(event.target.value)}
+                    autoComplete="username"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-800 outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                    placeholder="admin"
+                  />
+                </label>
+                <label className="block text-left">
+                  <span className="mb-1.5 block text-xs font-bold text-slate-600">密码</span>
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(event) => setLoginPassword(event.target.value)}
+                    autoComplete="current-password"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-800 outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                    placeholder="请输入密码"
+                  />
+                </label>
+              </div>
+
+              {loginError && (
+                <div className="rounded-xl border border-rose-100 bg-rose-50 px-3.5 py-2.5 text-left text-xs font-semibold text-rose-700">
+                  {loginError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoginSubmitting}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-extrabold text-white shadow-md transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLoginSubmitting ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>正在登录</span>
+                  </>
+                ) : (
+                  <>
+                    <User className="h-4 w-4" />
+                    <span>登录系统</span>
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-[#f8fafc] overflow-hidden">
       {/* Premium Navigation Header */}
@@ -3256,10 +3425,12 @@ ${selectedTextStr}
                 返回工作台
               </button>
               <button 
-                onClick={() => {
+                onClick={async () => {
                   setIsLogoutConfirmOpen(false);
-                  // Quick simulate logout feedback via system message banner
-                  setEvalSuccessMessage("✓ 已安全登出。工作区已解密冻结，输入口令后可重新加载。");
+                  await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+                  setLoginPassword("");
+                  setLoginError("已安全登出，请重新登录。");
+                  setAuthStatus('anonymous');
                 }}
                 className="px-4 py-2 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors shadow-sm"
               >
