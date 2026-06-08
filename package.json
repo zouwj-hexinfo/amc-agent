@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
+  "name": "amc-agent",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,green \"bun run dev:api\" \"bun run dev:web\"",

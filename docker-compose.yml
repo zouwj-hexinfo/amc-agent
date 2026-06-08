@@ -1,0 +1,26 @@
+services:
+  amc-agent:
+    image: repo.hexops.cn/docker-dev/amc-agent:latest
+    container_name: amc-agent
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - NODE_ENV=production
+      - PORT=${PORT:-3100}
+      - HERMES_AGENT_API_URL=${HERMES_AGENT_API_URL:-http://172.18.21.56:8642}
+      - HERMES_AGENT_API_KEY=${HERMES_AGENT_API_KEY:?HERMES_AGENT_API_KEY is required}
+      - HERMES_AGENT_MODEL=${HERMES_AGENT_MODEL:-deepseek-v4-flash}
+      - DELEGATION_MAX_CONCURRENT_CHILDREN=${DELEGATION_MAX_CONCURRENT_CHILDREN:-5}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://172.18.21.35:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-xfas}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-7VfR23Dn5bM5/ElnbKlVN4Sx6fU87yE1ikhB/w9PP7E=}
+      - MINIO_BUCKET=${MINIO_BUCKET:-xfas}
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const port = process.env.PORT || '3100'; const response = await fetch(`http://localhost:${port}/api/health`); if (!response.ok) process.exit(1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
